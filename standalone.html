@@ -1,0 +1,2404 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Inside a Tiny Transformer — Interactive LLM Visualizer</title>
+<style>
+:root {
+  --bg: #f7f8fa;
+  --panel: #ffffff;
+  --ink: #1a2332;
+  --muted: #5b6474;
+  --line: #e2e6ec;
+  --accent: #2456d6;
+  --accent-soft: #e8eefc;
+  --pos: #2456d6;
+  --neg: #c2481f;
+  --warn-bg: #fff6e5;
+  --warn-line: #e8c76a;
+  --ok: #1c7a4d;
+  --radius: 10px;
+  --mono: "SFMono-Regular", ui-monospace, "JetBrains Mono", Menlo, Consolas, monospace;
+  --sans: -apple-system, BlinkMacSystemFont, "Segoe UI", Inter, Roboto, "Helvetica Neue", Arial, sans-serif;
+}
+* { box-sizing: border-box; }
+html, body { margin: 0; padding: 0; }
+body {
+  background: var(--bg);
+  color: var(--ink);
+  font-family: var(--sans);
+  font-size: 14px;
+  line-height: 1.45;
+}
+button, input, select { font-family: inherit; font-size: 13px; }
+button { cursor: pointer; }
+
+/* ---------- Header ---------- */
+.app-header {
+  display: flex; align-items: center; gap: 14px;
+  padding: 10px 16px;
+  background: var(--panel);
+  border-bottom: 1px solid var(--line);
+  position: sticky; top: 0; z-index: 50;
+  flex-wrap: wrap;
+}
+.brand { display: flex; align-items: center; gap: 10px; }
+.brand-mark {
+  width: 30px; height: 30px; border-radius: 8px;
+  background: var(--ink); color: #fff;
+  display: flex; align-items: center; justify-content: center;
+  font-family: var(--mono); font-weight: 700; font-size: 15px;
+}
+.brand h1 { font-size: 15px; margin: 0; font-weight: 650; letter-spacing: 0.1px; }
+.brand small { display: block; color: var(--muted); font-weight: 400; font-size: 11.5px; }
+.mode-tabs { display: flex; gap: 6px; margin-left: 8px; }
+.mode-tab {
+  border: 1px solid var(--line); background: #fff; color: var(--muted);
+  padding: 7px 14px; border-radius: 999px; font-weight: 600;
+}
+.mode-tab.active { background: var(--ink); color: #fff; border-color: var(--ink); }
+.header-spacer { flex: 1; }
+.header-actions { display: flex; gap: 8px; align-items: center; }
+.btn {
+  border: 1px solid var(--line); background: #fff; color: var(--ink);
+  padding: 7px 12px; border-radius: 8px; font-weight: 600;
+}
+.btn:hover { border-color: var(--accent); color: var(--accent); }
+.btn.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+.btn.primary:hover { filter: brightness(0.93); color: #fff; }
+.btn.ghost { background: transparent; }
+.btn.small { padding: 4px 9px; font-size: 12px; border-radius: 7px; }
+.btn:disabled { opacity: 0.45; cursor: not-allowed; }
+.seed-chip {
+  display: flex; align-items: center; gap: 6px;
+  font-family: var(--mono); font-size: 12px; color: var(--muted);
+  border: 1px solid var(--line); border-radius: 8px; padding: 5px 9px; background: #fff;
+}
+.seed-chip input { width: 64px; border: none; outline: none; font-family: var(--mono); font-size: 12px; }
+
+/* ---------- Config bar ---------- */
+.config-bar {
+  display: flex; gap: 10px; align-items: end; flex-wrap: wrap;
+  padding: 10px 16px; background: var(--panel);
+  border-bottom: 1px solid var(--line);
+}
+.cfg { display: flex; flex-direction: column; gap: 3px; }
+.cfg label { font-size: 10.5px; text-transform: uppercase; letter-spacing: 0.5px; color: var(--muted); font-weight: 700; }
+.cfg select, .cfg input[type="number"] {
+  border: 1px solid var(--line); border-radius: 7px; padding: 5px 7px; background: #fff; min-width: 76px;
+}
+.cfg input[type="range"] { width: 130px; accent-color: var(--accent); }
+.cfg .val { font-family: var(--mono); font-size: 12px; }
+.config-error {
+  display: none; background: #fdeeee; border: 1px solid #e8a08a; color: #8f2b12;
+  border-radius: 8px; padding: 6px 10px; font-size: 12.5px; font-weight: 600;
+}
+.config-error.show { display: block; }
+
+/* ---------- Layout ---------- */
+.layout {
+  display: grid;
+  grid-template-columns: 212px minmax(0, 1fr) 300px;
+  gap: 12px;
+  padding: 12px 16px;
+  align-items: start;
+}
+@media (max-width: 1100px) {
+  .layout { grid-template-columns: 190px minmax(0, 1fr); }
+  .explain-col { grid-column: 1 / -1; }
+}
+@media (max-width: 760px) {
+  .layout { grid-template-columns: 1fr; }
+  .pipe-col { order: 2; } .main-col { order: 1; } .explain-col { order: 3; }
+}
+.panel {
+  background: var(--panel); border: 1px solid var(--line);
+  border-radius: var(--radius); padding: 12px;
+}
+.panel h2 {
+  font-size: 11px; text-transform: uppercase; letter-spacing: 0.7px;
+  color: var(--muted); margin: 0 0 10px; font-weight: 750;
+}
+
+/* ---------- Pipeline nav ---------- */
+.pipe-list { display: flex; flex-direction: column; gap: 4px; }
+.pipe-item {
+  display: flex; gap: 9px; align-items: center; text-align: left;
+  border: 1px solid transparent; background: transparent;
+  padding: 7px 8px; border-radius: 8px; color: var(--ink); width: 100%;
+}
+.pipe-item:hover { background: var(--accent-soft); }
+.pipe-item.active { background: var(--accent-soft); border-color: #bcd0f5; }
+.pipe-item.done .pipe-num { background: var(--ok); }
+.pipe-num {
+  min-width: 22px; height: 22px; border-radius: 50%;
+  background: #c9d2e0; color: #fff; font-size: 11.5px; font-weight: 700;
+  display: flex; align-items: center; justify-content: center;
+}
+.pipe-item.active .pipe-num { background: var(--accent); }
+.pipe-item .t { font-weight: 600; font-size: 13px; }
+.pipe-item .s { display: block; font-family: var(--mono); font-size: 10.5px; color: var(--muted); font-weight: 400; }
+
+/* ---------- Stage nav ---------- */
+.stage-nav {
+  display: flex; align-items: center; gap: 8px; margin-bottom: 10px; flex-wrap: wrap;
+}
+.stage-pos { font-family: var(--mono); font-size: 12.5px; color: var(--muted); }
+.stage-title { font-size: 16px; font-weight: 700; margin: 2px 0 2px; }
+.stage-sub { color: var(--muted); font-size: 12.5px; margin: 0 0 10px; }
+
+/* ---------- Visual primitives ---------- */
+.token-chip {
+  display: inline-flex; align-items: center; gap: 6px;
+  border: 1px solid var(--line); background: #fff; border-radius: 999px;
+  padding: 4px 11px; margin: 2px; font-weight: 600; font-size: 13px;
+}
+.token-chip .id { font-family: var(--mono); font-size: 11px; color: var(--muted); font-weight: 400; }
+.token-chip.new { border-color: var(--accent); background: var(--accent-soft); }
+.token-chip.qsel { border-color: var(--accent); background: var(--ink); color: #fff; }
+.token-chip.qsel .id { color: #cfd8ea; }
+.token-chip.clickable { cursor: pointer; }
+.shape-badge {
+  display: inline-block; font-family: var(--mono); font-size: 11.5px;
+  background: #eef1f6; border: 1px solid var(--line); border-radius: 6px;
+  padding: 2px 7px; margin: 2px 4px 2px 0; white-space: nowrap;
+}
+.op-box {
+  border: 1.5px solid var(--ink); border-radius: 9px; padding: 8px 14px;
+  font-weight: 700; display: inline-block; background: #fff; font-size: 13px;
+}
+.tensor-box {
+  border: 1px solid var(--line); border-radius: 9px; padding: 8px 12px;
+  background: #fbfcfe; display: inline-block; font-family: var(--mono); font-size: 12px;
+}
+.flow { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin: 10px 0; }
+.arrow { color: var(--muted); font-weight: 700; }
+.eq-block {
+  font-family: var(--mono); font-size: 12.5px; background: #f3f5f9;
+  border: 1px solid var(--line); border-radius: 8px; padding: 8px 12px;
+  margin: 8px 0; overflow-x: auto; white-space: nowrap;
+}
+.simplify-note {
+  background: var(--warn-bg); border: 1px solid var(--warn-line);
+  border-radius: 8px; padding: 7px 11px; font-size: 12.5px; margin: 8px 0;
+}
+.simplify-note b { font-size: 11px; text-transform: uppercase; letter-spacing: 0.4px; }
+.row-sum { font-family: var(--mono); font-size: 11.5px; color: var(--ok); font-weight: 700; }
+
+/* ---------- Matrices ---------- */
+.matrix-wrap { overflow: auto; margin: 8px 0; border: 1px solid var(--line); border-radius: 9px; background: #fff; }
+table.matrix { border-collapse: collapse; font-family: var(--mono); font-size: 11.5px; }
+table.matrix th, table.matrix td { border: 1px solid #eef1f5; padding: 4px 7px; text-align: right; min-width: 62px; }
+table.matrix th { background: #f3f5f9; color: var(--muted); font-weight: 700; text-align: center; position: sticky; top: 0; }
+table.matrix th.rowlab, table.matrix td.rowlab {
+  text-align: left; background: #f3f5f9; color: var(--ink); font-weight: 700;
+  position: sticky; left: 0; max-width: 150px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+table.matrix td.hl-row { outline: 2px solid var(--accent); outline-offset: -2px; }
+table.matrix td.hl-col { outline: 2px solid #7a4fd0; outline-offset: -2px; }
+table.matrix td.masked { color: #9aa3b2; font-style: italic; }
+table.matrix td:hover { outline: 2px solid var(--ink); outline-offset: -2px; }
+.legend { display: flex; gap: 12px; align-items: center; font-size: 11.5px; color: var(--muted); margin: 4px 0 8px; flex-wrap: wrap; }
+.legend .sw { display: inline-block; width: 12px; height: 12px; border-radius: 3px; margin-right: 4px; vertical-align: -1px; }
+
+/* ---------- Bars ---------- */
+.bars { display: flex; flex-direction: column; gap: 3px; margin: 8px 0; }
+.bar-row { display: grid; grid-template-columns: 92px 1fr 74px; gap: 8px; align-items: center; font-size: 12px; }
+.bar-row .tok { font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; text-align: right; }
+.bar-row .num { font-family: var(--mono); font-size: 11.5px; color: var(--muted); }
+.bar-track { background: #eef1f6; border-radius: 4px; height: 14px; position: relative; overflow: hidden; }
+.bar-fill { background: var(--accent); height: 100%; border-radius: 4px; transition: width 0.25s ease; }
+.bar-row.kept .bar-fill { background: var(--accent); }
+.bar-row.cut .bar-fill { background: #c3cad6; }
+.bar-row.cut { opacity: 0.55; }
+.bar-row.selected .tok { color: var(--accent); font-weight: 800; }
+.bar-row.selected .bar-fill { background: var(--ink); }
+
+/* ---------- Controls / misc ---------- */
+.controls-row { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; margin: 8px 0; }
+.input-text {
+  width: 100%; border: 1px solid var(--line); border-radius: 8px; padding: 8px 10px;
+  font-size: 14px; resize: vertical; min-height: 40px; font-family: inherit;
+}
+.subtabs { display: flex; gap: 6px; margin: 8px 0; flex-wrap: wrap; }
+.subtab { border: 1px solid var(--line); background: #fff; border-radius: 7px; padding: 5px 11px; font-weight: 600; color: var(--muted); }
+.subtab.active { background: var(--ink); color: #fff; border-color: var(--ink); }
+.head-pills { display: flex; gap: 6px; margin: 6px 0; flex-wrap: wrap; }
+.explain-box h3 { font-size: 12px; margin: 10px 0 3px; color: var(--ink); }
+.explain-box h3:first-child { margin-top: 0; }
+.explain-box p { margin: 0 0 4px; font-size: 13px; color: #2c3648; }
+.explain-box .more { display: none; font-size: 12.5px; color: var(--muted); border-left: 3px solid var(--line); padding-left: 9px; margin-top: 6px; }
+.explain-box .more.show { display: block; }
+.link-btn { background: none; border: none; color: var(--accent); font-weight: 700; padding: 2px 0; font-size: 12.5px; }
+.link-btn:hover { text-decoration: underline; }
+.insp-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(120px, 1fr)); gap: 6px; margin: 8px 0; }
+.insp-stat { background: #f6f8fb; border: 1px solid var(--line); border-radius: 7px; padding: 5px 9px; }
+.insp-stat .k { font-size: 10px; text-transform: uppercase; letter-spacing: 0.5px; color: var(--muted); font-weight: 700; }
+.insp-stat .v { font-family: var(--mono); font-size: 12.5px; }
+.gen-history { display: flex; flex-direction: column; gap: 6px; margin-top: 8px; max-height: 260px; overflow: auto; }
+.hist-step {
+  border: 1px solid var(--line); border-radius: 8px; padding: 7px 10px; background: #fff;
+  cursor: pointer; font-size: 12.5px;
+}
+.hist-step:hover { border-color: var(--accent); }
+.hist-step.active { border-color: var(--accent); background: var(--accent-soft); }
+.hist-step .step { font-family: var(--mono); color: var(--muted); font-size: 11px; margin-right: 8px; }
+.hist-step .newtok { font-weight: 800; color: var(--accent); }
+.block-stack { display: flex; flex-direction: column; gap: 4px; align-items: stretch; margin: 8px 0; }
+.block-card { border: 1.5px solid var(--line); border-radius: 9px; padding: 9px 12px; background: #fff; cursor: pointer; }
+.block-card.active { border-color: var(--accent); background: var(--accent-soft); }
+.block-card .bt { font-weight: 700; }
+.block-card .bs { font-family: var(--mono); font-size: 11px; color: var(--muted); }
+.block-arrow { text-align: center; color: var(--muted); font-weight: 700; line-height: 1; }
+.resid-diagram {
+  font-family: var(--mono); font-size: 12px; background: #fbfcfe;
+  border: 1px solid var(--line); border-radius: 9px; padding: 10px 14px; white-space: pre; overflow-x: auto;
+}
+.kv { display: grid; grid-template-columns: auto 1fr; gap: 3px 12px; font-size: 12.5px; margin: 6px 0; }
+.kv .k { color: var(--muted); font-weight: 600; }
+.kv .v { font-family: var(--mono); font-size: 12px; }
+.calc-box { background: #fbfcfe; border: 1px dashed var(--line); border-radius: 8px; padding: 8px 12px; font-family: var(--mono); font-size: 12px; margin: 8px 0; }
+.progress-dots { display: flex; gap: 4px; }
+.progress-dots span { width: 22px; height: 5px; border-radius: 3px; background: #dfe4ec; }
+.progress-dots span.on { background: var(--accent); }
+
+/* ---------- Bottom inspector ---------- */
+.bottom-bar { padding: 0 16px 16px; }
+.inspector-body { display: grid; grid-template-columns: 300px minmax(0, 1fr); gap: 12px; }
+@media (max-width: 900px) { .inspector-body { grid-template-columns: 1fr; } }
+.tensor-list { display: flex; flex-direction: column; gap: 3px; max-height: 300px; overflow: auto; }
+.tensor-btn { text-align: left; border: 1px solid var(--line); background: #fff; border-radius: 7px; padding: 6px 9px; }
+.tensor-btn:hover { border-color: var(--accent); }
+.tensor-btn.active { background: var(--ink); color: #fff; border-color: var(--ink); }
+.tensor-btn .sh { font-family: var(--mono); font-size: 10.5px; opacity: 0.7; display: block; }
+
+/* ---------- Modal ---------- */
+.modal-back {
+  position: fixed; inset: 0; background: rgba(20, 28, 44, 0.45);
+  display: none; align-items: center; justify-content: center; z-index: 100; padding: 20px;
+}
+.modal-back.show { display: flex; }
+.modal {
+  background: #fff; border-radius: 12px; max-width: 640px; width: 100%;
+  max-height: 85vh; overflow: auto; padding: 20px 22px;
+}
+.modal h2 { margin: 0 0 8px; font-size: 17px; }
+.modal p, .modal li { font-size: 13px; color: #2c3648; }
+.modal pre { white-space: pre-wrap; font-size: 12.5px; background: #f3f5f9; padding: 10px; border-radius: 8px; font-family: var(--sans); }
+.test-row { display: flex; gap: 8px; align-items: baseline; font-size: 12.5px; padding: 3px 0; border-bottom: 1px solid #f0f2f6; }
+.test-row .pass { color: var(--ok); font-weight: 800; }
+.test-row .fail { color: #b3271e; font-weight: 800; }
+
+/* ---------- SVG helpers ---------- */
+svg text { font-family: var(--mono); }
+.gelu-plot { border: 1px solid var(--line); border-radius: 9px; background: #fff; }
+.attn-flow { display: flex; align-items: stretch; gap: 6px; flex-wrap: wrap; margin: 8px 0; }
+.attn-node {
+  border: 1px solid var(--line); border-radius: 8px; padding: 6px 10px; background: #fbfcfe;
+  font-family: var(--mono); font-size: 11.5px; text-align: center; cursor: pointer;
+}
+.attn-node:hover, .attn-node.active { border-color: var(--accent); background: var(--accent-soft); }
+
+.flash { animation: flash 0.6s ease; }
+@keyframes flash { 0% { background: var(--accent-soft); } 100% { background: #fff; } }
+@media (prefers-reduced-motion: reduce) {
+  * { animation: none !important; transition: none !important; }
+}
+:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); }
+</style>
+</head>
+<body>
+
+<header class="app-header">
+  <div class="brand">
+    <div class="brand-mark" aria-hidden="true">T</div>
+    <h1>Inside a Tiny Transformer<small>an interactive simulator of Transformer inference</small></h1>
+  </div>
+  <nav class="mode-tabs" aria-label="Learning mode">
+    <button class="mode-tab active" id="tabEncoder" aria-pressed="true">A · Attention Explorer</button>
+    <button class="mode-tab" id="tabDecoder" aria-pressed="false">B · GPT-style Generator</button>
+  </nav>
+  <div class="header-spacer"></div>
+  <div class="header-actions">
+    <label class="seed-chip" title="Master seed: same input + config + seed reproduces every number">
+      seed <input id="seedInput" type="number" value="42" min="0" max="999999" aria-label="Random seed" />
+    </label>
+    <button class="btn small" id="aboutBtn">About this simulator</button>
+    <button class="btn small" id="testsBtn">Run tests</button>
+  </div>
+</header>
+
+<div class="config-bar" id="configBar" aria-label="Model configuration"></div>
+<div style="padding:0 16px"><div class="config-error" id="configError" role="alert"></div></div>
+
+<main class="layout">
+  <aside class="panel pipe-col" aria-label="Pipeline stages">
+    <h2>Pipeline</h2>
+    <div class="pipe-list" id="pipeList"></div>
+  </aside>
+
+  <section class="panel main-col" aria-label="Main visualization">
+    <div class="stage-nav">
+      <button class="btn small" id="prevBtn" aria-label="Previous stage">← Prev</button>
+      <button class="btn small" id="playBtn" aria-label="Auto-play stages">▶ Play</button>
+      <button class="btn small primary" id="nextBtn" aria-label="Next stage">Next →</button>
+      <span class="stage-pos" id="stagePos"></span>
+      <div class="progress-dots" id="progressDots" aria-hidden="true"></div>
+    </div>
+    <h2 class="stage-title" id="stageTitle"></h2>
+    <p class="stage-sub" id="stageSub"></p>
+    <div id="stageView"></div>
+  </section>
+
+  <aside class="panel explain-col" aria-label="Explanation">
+    <h2>Explanation</h2>
+    <div class="explain-box" id="explainBox"></div>
+  </aside>
+</main>
+
+<div class="bottom-bar">
+  <section class="panel" aria-label="Tensor inspector">
+    <h2>Tensor Inspector — one source of truth: every number below comes from the same computation as the visualization above</h2>
+    <div class="inspector-body">
+      <div class="tensor-list" id="tensorList" role="listbox" aria-label="Tensors"></div>
+      <div id="tensorDetail"></div>
+    </div>
+  </section>
+</div>
+
+<div class="modal-back" id="modalBack">
+  <div class="modal" role="dialog" aria-modal="true" aria-labelledby="modalTitle">
+    <h2 id="modalTitle"></h2>
+    <div id="modalBody"></div>
+    <div class="controls-row" style="margin-top:12px">
+      <button class="btn" id="modalClose">Close</button>
+    </div>
+  </div>
+</div>
+
+<script>
+(() => {
+  // js/engine.js
+  function fnv1a(str) {
+    let hash = 2166136261;
+    for (let i = 0; i < str.length; i++) {
+      hash ^= str.charCodeAt(i);
+      hash = Math.imul(hash, 16777619) >>> 0;
+    }
+    return hash >>> 0;
+  }
+  function mulberry32(seed) {
+    let a = seed >>> 0;
+    return function() {
+      a |= 0;
+      a = a + 1831565813 | 0;
+      let t = Math.imul(a ^ a >>> 15, 1 | a);
+      t = t + Math.imul(t ^ t >>> 7, 61 | t) ^ t;
+      return ((t ^ t >>> 14) >>> 0) / 4294967296;
+    };
+  }
+  function streamRng(seed, salt) {
+    return mulberry32((seed >>> 0 ^ fnv1a(String(salt))) >>> 0);
+  }
+  function randn(rng) {
+    let u1 = 0;
+    while (u1 === 0) u1 = rng();
+    const u2 = rng();
+    const r = Math.sqrt(-2 * Math.log(u1));
+    const theta = 2 * Math.PI * u2;
+    return r * Math.cos(theta);
+  }
+  var BASE_VOCAB = [
+    "The",
+    "cat",
+    "sat",
+    "on",
+    "mat",
+    "dog",
+    "ran",
+    "a",
+    "the",
+    "and",
+    "is",
+    "was",
+    "it",
+    "to",
+    "in",
+    "he",
+    "she",
+    "we",
+    "they",
+    "you",
+    "I",
+    "man",
+    "woman",
+    "child",
+    "bird",
+    "fish",
+    "tree",
+    "house",
+    "car",
+    "book",
+    "sun",
+    "moon",
+    "star",
+    "sky",
+    "sea",
+    "fire",
+    "water",
+    "earth",
+    "wind",
+    "day",
+    "night",
+    "light",
+    "dark",
+    "big",
+    "small",
+    "red",
+    "blue",
+    "green",
+    "happy",
+    "sad",
+    "fast",
+    "slow",
+    "up",
+    "down",
+    "over",
+    "under",
+    "with",
+    "at",
+    "of",
+    "for",
+    "from",
+    "that",
+    "this",
+    "not"
+  ];
+  function buildVocab(vocabSize) {
+    const v = [];
+    for (let i = 0; i < vocabSize; i++) {
+      v.push(i < BASE_VOCAB.length ? BASE_VOCAB[i] : `tok${i}`);
+    }
+    return v;
+  }
+  function tokenize(text, vocabSize) {
+    const tokens = String(text ?? "").trim().split(/\s+/).filter(Boolean);
+    const ids = tokens.map((t) => fnv1a(t) % vocabSize);
+    return { tokens, ids };
+  }
+  function zeros(rows, cols) {
+    return Array.from({ length: rows }, () => new Array(cols).fill(0));
+  }
+  function createMatrix(rows, cols, fn) {
+    return Array.from(
+      { length: rows },
+      (_, r) => Array.from({ length: cols }, (_2, c) => fn(r, c))
+    );
+  }
+  function matmul(A, B) {
+    const m = A.length, k = A[0].length, n = B[0].length;
+    if (B.length !== k) throw new Error(`matmul shape mismatch: [${m},${k}] x [${B.length},${n}]`);
+    const C = zeros(m, n);
+    for (let i = 0; i < m; i++) {
+      for (let p = 0; p < k; p++) {
+        const a = A[i][p];
+        for (let j = 0; j < n; j++) C[i][j] += a * B[p][j];
+      }
+    }
+    return C;
+  }
+  function transpose(M) {
+    const r = M.length, c = M[0].length;
+    return createMatrix(c, r, (i, j) => M[j][i]);
+  }
+  function addMatrices(A, B) {
+    return A.map((row, i) => row.map((v, j) => v + B[i][j]));
+  }
+  function scaleMatrix(M, s) {
+    return M.map((row) => row.map((v) => v * s));
+  }
+  function addBiasRows(M, b) {
+    return M.map((row) => row.map((v, j) => v + b[j]));
+  }
+  function linear(X, W, b = null) {
+    const Y = matmul(X, W);
+    return b ? addBiasRows(Y, b) : Y;
+  }
+  function createEmbedding(vocabSize, dModel, seed) {
+    const rng = streamRng(seed, `embed|v=${vocabSize}|d=${dModel}`);
+    return createMatrix(vocabSize, dModel, () => randn(rng) * 0.6);
+  }
+  function embedLookup(ids, embeddingMatrix) {
+    return ids.map((id) => [...embeddingMatrix[id]]);
+  }
+  function createSinusoidalPositionEncoding(seqLen, dModel) {
+    return createMatrix(seqLen, dModel, (pos, i) => {
+      const div = Math.pow(1e4, 2 * Math.floor(i / 2) / dModel);
+      return i % 2 === 0 ? Math.sin(pos / div) : Math.cos(pos / div);
+    });
+  }
+  function gaussianMatrix(rows, cols, rng, scale) {
+    return createMatrix(rows, cols, () => randn(rng) * scale);
+  }
+  function createWeights(config, seed) {
+    const { dModel, dFF, nLayers, vocabSize } = config;
+    const W = { embedding: createEmbedding(vocabSize, dModel, seed), layers: [] };
+    for (let l = 0; l < nLayers; l++) {
+      const s = (name) => streamRng(seed, `L${l}|${name}|d=${dModel}|dff=${dFF}|v=${vocabSize}`);
+      const sc = Math.sqrt(1 / dModel);
+      W.layers.push({
+        WQ: gaussianMatrix(dModel, dModel, s("WQ"), sc),
+        WK: gaussianMatrix(dModel, dModel, s("WK"), sc),
+        WVO: null,
+        // placeholder replaced below (kept for clarity)
+        WV: gaussianMatrix(dModel, dModel, s("WV"), sc),
+        WO: gaussianMatrix(dModel, dModel, s("WO"), sc),
+        ln1Gamma: new Array(dModel).fill(1),
+        ln1Beta: new Array(dModel).fill(0),
+        W1: gaussianMatrix(dModel, dFF, s("W1"), Math.sqrt(1 / dModel)),
+        b1: new Array(dFF).fill(0),
+        W2: gaussianMatrix(dFF, dModel, s("W2"), Math.sqrt(1 / dFF)),
+        b2: new Array(dModel).fill(0),
+        ln2Gamma: new Array(dModel).fill(1),
+        ln2Beta: new Array(dModel).fill(0)
+      });
+      delete W.layers[l].WVO;
+    }
+    W.finalGamma = new Array(dModel).fill(1);
+    W.finalBeta = new Array(dModel).fill(0);
+    W.lmHead = gaussianMatrix(dModel, vocabSize, streamRng(seed, `lmHead|d=${dModel}|v=${vocabSize}`), Math.sqrt(1 / dModel));
+    return W;
+  }
+  function splitHeads(X, nHeads) {
+    const seq = X.length, dModel = X[0].length;
+    if (dModel % nHeads !== 0) throw new Error(`d_model (${dModel}) must be divisible by n_heads (${nHeads})`);
+    const dHead = dModel / nHeads;
+    const heads = [];
+    for (let h = 0; h < nHeads; h++) {
+      heads.push(X.map((row) => row.slice(h * dHead, (h + 1) * dHead)));
+    }
+    return { heads, dHead };
+  }
+  function concatHeads(heads) {
+    const seq = heads[0].length;
+    const out = [];
+    for (let i = 0; i < seq; i++) {
+      const row = [];
+      for (const h of heads) row.push(...h[i]);
+      out.push(row);
+    }
+    return out;
+  }
+  function softmaxVec(v) {
+    const m = Math.max(...v);
+    const e = v.map((x) => Math.exp(x - m));
+    const s = e.reduce((a, b) => a + b, 0);
+    return e.map((x) => x / s);
+  }
+  function softmax(M) {
+    return M.map(softmaxVec);
+  }
+  function applyCausalMask(scores) {
+    return scores.map((row, i) => row.map((v, j) => j > i ? -1e9 : v));
+  }
+  function scaledDotProductAttention(Q, K, V, { causal = false } = {}) {
+    const dHead = Q[0].length;
+    const scores = matmul(Q, transpose(K));
+    const scaled = scaleMatrix(scores, 1 / Math.sqrt(dHead));
+    const masked = causal ? applyCausalMask(scaled) : scaled;
+    const weights = softmax(masked);
+    const output = matmul(weights, V);
+    return { scores, scaled, masked, weights, output, dHead };
+  }
+  function layerNorm(X, gamma, beta, eps = 1e-5) {
+    const d = X[0].length;
+    const means = [], variances = [], normalized = [];
+    const output = X.map((row) => {
+      const mean = row.reduce((a, b) => a + b, 0) / d;
+      const varr = row.reduce((a, b) => a + (b - mean) ** 2, 0) / d;
+      means.push(mean);
+      variances.push(varr);
+      const nrow = row.map((v) => (v - mean) / Math.sqrt(varr + eps));
+      normalized.push(nrow);
+      return nrow.map((v, j) => v * gamma[j] + beta[j]);
+    });
+    return { output, means, variances, normalized };
+  }
+  function gelu(x) {
+    const c = Math.sqrt(2 / Math.PI);
+    return 0.5 * x * (1 + Math.tanh(c * (x + 0.044715 * x * x * x)));
+  }
+  function geluMatrix(M) {
+    return M.map((row) => row.map(gelu));
+  }
+  function feedForward(X, W1, b1, W2, b2) {
+    const hiddenPre = addBiasRows(matmul(X, W1), b1);
+    const hiddenAct = geluMatrix(hiddenPre);
+    const output = addBiasRows(matmul(hiddenAct, W2), b2);
+    return { hiddenPre, hiddenAct, output };
+  }
+  function transformerBlock(X, w, nHeads, { causal = true } = {}) {
+    const ln1 = layerNorm(X, w.ln1Gamma, w.ln1Beta);
+    const Q = linear(ln1.output, w.WQ);
+    const K = linear(ln1.output, w.WK);
+    const V = linear(ln1.output, w.WV);
+    const { heads: Qh, dHead } = splitHeads(Q, nHeads);
+    const { heads: Kh } = splitHeads(K, nHeads);
+    const { heads: Vh } = splitHeads(V, nHeads);
+    const attn = Qh.map((q, h) => scaledDotProductAttention(q, Kh[h], Vh[h], { causal }));
+    const ctxHeads = attn.map((a) => a.output);
+    const concat = concatHeads(ctxHeads);
+    const proj = linear(concat, w.WO);
+    const resid1 = addMatrices(X, proj);
+    const ln2 = layerNorm(resid1, w.ln2Gamma, w.ln2Beta);
+    const ffn = feedForward(ln2.output, w.W1, w.b1, w.W2, w.b2);
+    const out = addMatrices(resid1, ffn.output);
+    return { ln1, Q, K, V, Qh, Kh, Vh, dHead, attn, ctxHeads, concat, proj, resid1, ln2, ffn, output: out };
+  }
+  function encoderAttention(X, w, nHeads) {
+    const Q = linear(X, w.WQ);
+    const K = linear(X, w.WK);
+    const V = linear(X, w.WV);
+    const { heads: Qh, dHead } = splitHeads(Q, nHeads);
+    const { heads: Kh } = splitHeads(K, nHeads);
+    const { heads: Vh } = splitHeads(V, nHeads);
+    const attn = Qh.map((q, h) => scaledDotProductAttention(q, Kh[h], Vh[h], { causal: false }));
+    const ctxHeads = attn.map((a) => a.output);
+    const concat = concatHeads(ctxHeads);
+    const proj = linear(concat, w.WO);
+    const ffn = feedForward(proj, w.W1, w.b1, w.W2, w.b2);
+    return { Q, K, V, Qh, Kh, Vh, dHead, attn, ctxHeads, concat, proj, ffn };
+  }
+  function lmHead(X, Wlm) {
+    return matmul(X, Wlm);
+  }
+  function applyTemperature(logitsVec, temperature) {
+    return logitsVec.map((v) => v / temperature);
+  }
+  function renormalizeSample(cands, rng) {
+    const s = cands.reduce((a, c) => a + c.prob, 0);
+    const norm = cands.map((c) => ({ ...c, prob: c.prob / s }));
+    let r = rng();
+    for (const c of norm) {
+      r -= c.prob;
+      if (r <= 0) return { selectedId: c.id, candidates: norm };
+    }
+    return { selectedId: norm[norm.length - 1].id, candidates: norm };
+  }
+  function greedySample(probs) {
+    let best = 0;
+    for (let i = 1; i < probs.length; i++) if (probs[i] > probs[best]) best = i;
+    const candidates = probs.map((p, id) => ({ id, prob: p, kept: id === best }));
+    return { selectedId: best, candidates };
+  }
+  function topKSample(probs, k, rng) {
+    const order = probs.map((p, id) => ({ id, prob: p })).sort((a, b) => b.prob - a.prob);
+    const keep = new Set(order.slice(0, Math.min(k, order.length)).map((c) => c.id));
+    const kept = order.filter((c) => keep.has(c.id));
+    const picked = renormalizeSample(kept, rng);
+    const candidates = probs.map((p, id) => ({ id, prob: p, kept: keep.has(id) }));
+    return { selectedId: picked.selectedId, candidates, renormalized: picked.candidates };
+  }
+  function topPSample(probs, p, rng) {
+    const order = probs.map((pr, id) => ({ id, prob: pr })).sort((a, b) => b.prob - a.prob);
+    let cum = 0;
+    const keep = /* @__PURE__ */ new Set();
+    for (const c of order) {
+      keep.add(c.id);
+      cum += c.prob;
+      if (cum >= p) break;
+    }
+    const kept = order.filter((c) => keep.has(c.id));
+    const picked = renormalizeSample(kept, rng);
+    const candidates = probs.map((pr, id) => ({ id, prob: pr, kept: keep.has(id) }));
+    return { selectedId: picked.selectedId, candidates, renormalized: picked.candidates, cumulative: cum };
+  }
+  function sampleNext(probs, method, { k = 5, p = 0.9, rng } = {}) {
+    if (method === "greedy") return { ...greedySample(probs), method };
+    if (method === "top-k") return { ...topKSample(probs, k, rng), method, k };
+    return { ...topPSample(probs, p, rng), method, p };
+  }
+  function forwardEncoder(text, config, seed) {
+    const vocab = buildVocab(config.vocabSize);
+    const { tokens, ids } = tokenize(text, config.vocabSize);
+    const weights = createWeights(config, seed);
+    const w0 = weights.layers[0];
+    const X = ids.length ? embedLookup(ids, weights.embedding) : [];
+    const PE = ids.length ? createSinusoidalPositionEncoding(ids.length, config.dModel) : [];
+    const Xpos = ids.length ? addMatrices(X, PE) : [];
+    const enc = ids.length ? encoderAttention(Xpos, w0, config.nHeads) : null;
+    return { vocab, tokens, ids, weights, X, PE, Xpos, enc, config, seed };
+  }
+  function forwardDecoder(ids, tokens, config, seed) {
+    const vocab = buildVocab(config.vocabSize);
+    const weights = createWeights(config, seed);
+    if (!ids.length) {
+      return { vocab, tokens, ids, weights, X: [], PE: [], Xpos: [], blocks: [], finalLN: null, logits: [], config, seed };
+    }
+    const X = embedLookup(ids, weights.embedding);
+    const PE = createSinusoidalPositionEncoding(ids.length, config.dModel);
+    const Xpos = addMatrices(X, PE);
+    const blocks = [];
+    let h = Xpos;
+    for (let l = 0; l < config.nLayers; l++) {
+      const b = transformerBlock(h, weights.layers[l], config.nHeads, { causal: true });
+      blocks.push(b);
+      h = b.output;
+    }
+    const finalLN = layerNorm(h, weights.finalGamma, weights.finalBeta);
+    const logits = lmHead(finalLN.output, weights.lmHead);
+    return { vocab, tokens, ids, weights, X, PE, Xpos, blocks, finalLN, logits, config, seed };
+  }
+  function decodeLastPosition(decoderTrace, { temperature, method, k, p, sampleSeed }) {
+    const seq = decoderTrace.logits.length;
+    const logitsLast = [...decoderTrace.logits[seq - 1]];
+    const scaled = applyTemperature(logitsLast, temperature);
+    const probs = softmaxVec(scaled);
+    const rng = mulberry32(sampleSeed >>> 0);
+    const sampling = sampleNext(probs, method, { k, p, rng });
+    return { logitsLast, scaled, probs, sampling };
+  }
+  function statsOf(M) {
+    const flat = M.flat();
+    if (!flat.length) return { min: 0, max: 0, mean: 0 };
+    let min = Infinity, max = -Infinity, s = 0;
+    for (const v of flat) {
+      if (v < min) min = v;
+      if (v > max) max = v;
+      s += v;
+    }
+    return { min, max, mean: s / flat.length };
+  }
+  function vecStats(v) {
+    return statsOf([v]);
+  }
+
+  // js/explanations.js
+  var ENCODER_EXPLANATIONS = [
+    {
+      what: "Text is split on whitespace, and each token is mapped to an integer ID with FNV-1a hashing.",
+      why: "Models operate on numbers. IDs index into the embedding table and vocabulary.",
+      shape: "text \u2192 [seq]",
+      equation: "id = FNV-1a(token) mod vocab_size",
+      more: "Toy tokenizer: whitespace split + FNV-1a hash. This is an educational simplification \u2014 real GPT-family tokenizers use learned subword schemes (e.g. BPE), not hashing. Hashing can collide; that is acceptable here because the goal is to visualize downstream math, not to build a real vocabulary."
+    },
+    {
+      what: "Each token ID is replaced by its row in the embedding table: a vector of d_model numbers.",
+      why: "Vectors give the model a working representation of each token that later layers combine with context.",
+      shape: "[seq] \u2192 [seq, d_model]",
+      equation: "x_i = E[id_i],  E \u2208 R^{vocab \xD7 d_model}",
+      more: "Educational simplification: this simulator fills the embedding table with seeded Gaussian values so runs are reproducible. In real models these values are learned parameters from training \u2014 they are not sampled from a Gaussian at inference time."
+    },
+    {
+      what: "A sinusoidal position code is added to every embedding so position information enters the representation.",
+      why: "Attention itself treats the sequence as a set; without position codes, order would be invisible.",
+      shape: "[seq, d_model] + [seq, d_model] \u2192 [seq, d_model]",
+      equation: "PE(pos,2i)=sin(pos/10000^{2i/d}), PE(pos,2i+1)=cos(pos/10000^{2i/d})",
+      more: "This is the fixed sinusoidal scheme from Vaswani et al. (2017). Other schemes (learned positions, RoPE) exist; the simulator uses sinusoids because they are deterministic and easy to visualize."
+    },
+    {
+      what: "The same input is projected three ways by learned matrices into queries (Q), keys (K), and values (V).",
+      why: "Queries ask, keys advertise, values carry content: comparing Q against K decides how V rows get mixed.",
+      shape: "[seq, d_model] \xD7 [d_model, d_model] \u2192 [seq, d_model] (\xD73)",
+      equation: "Q=XW_Q,  K=XW_K,  V=XW_V",
+      more: "Each output row is a linear combination of the input row. The three projections let the model use the same token representation in three different roles at once."
+    },
+    {
+      what: "Q, K, V are reshaped from [seq, d_model] into [n_heads, seq, d_head], one slice per head.",
+      why: "Heads run attention independently in subspaces, so different heads can track different relations.",
+      shape: "[seq, d_model] \u2192 [n_heads, seq, d_head]",
+      equation: "d_head = d_model / n_heads",
+      more: "Splitting is a reshape, not a learned operation \u2014 no numbers change, only grouping. Each head below attends with its own Q/K/V slice."
+    },
+    {
+      what: "Each head scores queries against keys, scales, normalizes with softmax, and mixes value rows.",
+      why: "This is how a token representation absorbs context from other positions, weighted by relevance scores.",
+      shape: "[seq, d_head] \xD7 [d_head, seq] \u2192 [seq, seq] \u2192 \xD7 [seq, d_head]",
+      equation: "Attention(Q,K,V) = softmax(QK\u1D40/\u221Ad_head)V",
+      more: "Scores are raw compatibilities; scaling by \u221Ad_head keeps softmax inputs in a stable range; weights (rows sum to 1) are the mixing coefficients; the output row is a weighted sum of value rows."
+    },
+    {
+      what: "Head outputs are concatenated back to d_model width, then projected once more by W_O.",
+      why: "Concatenation reunites the subspaces; W_O lets the model blend per-head results into one representation.",
+      shape: "[n_heads, seq, d_head] \u2192 [seq, d_model] \u2192 \xD7W_O \u2192 [seq, d_model]",
+      equation: "out = concat(head_1..head_h) \xB7 W_O",
+      more: "Concat and projection are distinct steps: concat only reorders values, while W_O is a learned mixing matrix."
+    },
+    {
+      what: "Each position passes independently through an expansion, GELU nonlinearity, and contraction back.",
+      why: "Attention mixes across positions; the FFN transforms each position's vector with extra capacity.",
+      shape: "[seq, d_model] \u2192 [seq, d_ff] \u2192 GELU \u2192 [seq, d_model]",
+      equation: "FFN(x) = GELU(xW_1+b_1)W_2+b_2",
+      more: "The same W_1/W_2 apply to every position (position-wise). GELU curves negative values smoothly toward zero instead of cutting them hard like ReLU."
+    }
+  ];
+  var DECODER_EXPLANATIONS = [
+    {
+      what: "The prompt is split on whitespace and hashed to token IDs (toy tokenizer).",
+      why: "Generation starts from numbers: IDs index embeddings and define the growing context.",
+      shape: "text \u2192 [seq]",
+      equation: "id = FNV-1a(token) mod vocab_size",
+      more: "Educational simplification: whitespace + FNV-1a hash. Real decoders use subword tokenizers. Detokenization maps sampled IDs back through the toy vocabulary list."
+    },
+    {
+      what: "IDs become embedding vectors; sinusoidal position codes are added.",
+      why: "The block stack needs position-aware vectors before any attention happens.",
+      shape: "[seq] \u2192 [seq, d_model] \u2192 +PE \u2192 [seq, d_model]",
+      equation: "x_i = E[id_i] + PE(i)",
+      more: "Same embedding and sinusoidal tables as encoder mode, rebuilt deterministically from the seed."
+    },
+    {
+      what: "Each token vector is normalized over its features (mean 0, variance 1), then scaled by \u03B3 and shifted by \u03B2.",
+      why: "Pre-norm keeps activations in a stable range so attention and FFN blocks train and behave reliably.",
+      shape: "[seq, d_model] \u2192 [seq, d_model]",
+      equation: "LN(x) = \u03B3\xB7(x\u2212\u03BC)/\u03C3 + \u03B2",
+      more: "LayerNorm normalizes over the feature dimension of each token independently \u2014 unlike BatchNorm, it never mixes across batch items or positions."
+    },
+    {
+      what: "Normalized states are projected to Q/K/V and split into per-head slices.",
+      why: "Same Q/K/V mechanism as the encoder, now inside each decoder block.",
+      shape: "[seq, d_model] \u2192 [n_heads, seq, d_head] (\xD73)",
+      equation: "Q=XW_Q, K=XW_K, V=XW_V",
+      more: "Weights differ per block but are fixed after initialization here; in real models they are learned during training."
+    },
+    {
+      what: "Scores for future positions are set to \u2212\u221E before softmax, so each token attends only to itself and the past.",
+      why: "Generation must not peek at tokens it has not produced yet. This is what makes the model autoregressive.",
+      shape: "[seq, seq] \u2192 masked \u2192 softmax \u2192 [seq, seq]",
+      equation: "score_{i,j} = \u2212\u221E  for j > i, before softmax",
+      more: "The mask is applied after scaling and before softmax. Softmax turns \u2212\u221E into probability 0. Toggle the mask to see future columns collapse to zero."
+    },
+    {
+      what: "Head outputs are concatenated, projected by W_O, and added back to the block input (residual).",
+      why: "Residuals preserve the original stream: attention only adds a refinement instead of replacing the state.",
+      shape: "X + Attn(LN(X)) \u2192 [seq, d_model]",
+      equation: "x' = x + W_O\xB7concat(heads)",
+      more: "Follow the two paths: the straight residual path and the attention path merge at '+'. This pattern repeats around the FFN too."
+    },
+    {
+      what: "A second norm + FFN refines each position, then a second residual adds it back: LN \u2192 GELU-MLP \u2192 add.",
+      why: "Same role as encoder FFN: per-position capacity that attention (cross-position mixing) does not provide.",
+      shape: "[seq, d_model] \u2192 [seq, d_ff] \u2192 [seq, d_model] \u2192 + residual",
+      equation: "x'' = x' + FFN(LN(x'))",
+      more: "One full pre-LN block is: x \u2192 +Attn(LN(x)) \u2192 +FFN(LN(\xB7)). Stack N blocks by repeating this transformation."
+    },
+    {
+      what: "The stacked blocks run in order; expand one block to inspect its internals.",
+      why: "Depth composes refinements: early blocks build local patterns, later blocks build on them.",
+      shape: "[seq, d_model] \u2192 block \xD7N \u2192 [seq, d_model]",
+      equation: "h_{l+1} = Block_l(h_l)",
+      more: "Progressive disclosure: the overview shows only shapes per block. Select a block to reuse the same LN/attention/FFN views with that block's tensors."
+    },
+    {
+      what: "One final LayerNorm is applied to the last block's output.",
+      why: "It standardizes the final hidden states before vocabulary scoring.",
+      shape: "[seq, d_model] \u2192 [seq, d_model]",
+      equation: "LN(x) = \u03B3\xB7(x\u2212\u03BC)/\u03C3 + \u03B2",
+      more: "Same LayerNorm operation as inside blocks, with its own \u03B3/\u03B2 parameters."
+    },
+    {
+      what: "Final states are projected to one raw score (logit) per vocabulary token; the last row predicts the next token.",
+      why: "Logits rank every possible continuation from the current context representation.",
+      shape: "[seq, d_model] \xD7 [d_model, vocab] \u2192 [seq, vocab]",
+      equation: "logits = h\xB7W_LM",
+      more: "Logits are unnormalized scores \u2014 not probabilities. Only the last sequence position is used for next-token prediction; earlier rows are shown for inspection."
+    },
+    {
+      what: "Last-row logits are divided by temperature, exponentiated, and normalized into probabilities.",
+      why: "Temperature reshapes sharpness; softmax converts scores into a distribution that sums to 1.",
+      shape: "[vocab] \u2192 /T \u2192 softmax \u2192 [vocab], \u03A3=1",
+      equation: "p_i = e^{z_i/T} / \u03A3_j e^{z_j/T}",
+      more: "Lower T sharpens (confident peaks), higher T flattens (more uniform). This changes shape only \u2014 never call it more or less intelligent."
+    },
+    {
+      what: "A token is drawn from the distribution (greedy / top-k / top-p), detokenized, and appended to the context.",
+      why: "Sampling turns probabilities into a choice; appending makes generation autoregressive.",
+      shape: "[vocab] \u2192 1 id \u2192 text grows by 1 token",
+      equation: "greedy: argmax p \xB7 top-k: keep k \xB7 top-p: keep cumsum \u2265 p",
+      more: "The same seed + method reproduces the same pick. Inspect any history step to see the full distribution that produced it."
+    }
+  ];
+  var ABOUT_TEXT = `This is a small educational Transformer simulator. Its tokenizer, vocabulary,
+dimensions, and weights are intentionally simplified so the internal computation can
+be visualized. It demonstrates the mechanics of Transformer inference (not training)
+rather than reproducing a production GPT model.
+
+Educational simplifications: whitespace+FNV-1a toy tokenizer \xB7 tiny fixed
+vocabulary \xB7 seeded Gaussian toy weights (real weights are learned in training) \xB7
+small d_model / layers / heads \xB7 sinusoidal positions.
+
+Inference only: all weights are fixed. Attention is one component among
+embeddings, norms, residuals, FFNs, and the LM head \u2014 not the whole model.`;
+
+  // js/format.js
+  function fmt(v, precision = 4) {
+    if (!isFinite(v)) return v < 0 ? "-\u221E" : "+\u221E";
+    if (v <= -1e8) return "-\u221E";
+    const p = Math.pow(10, precision);
+    const r = Math.round(v * p) / p;
+    return (Object.is(r, -0) ? 0 : r).toFixed(precision);
+  }
+  function esc(s) {
+    return String(s).replace(/[&<>"']/g, (c) => ({
+      "&": "&amp;",
+      "<": "&lt;",
+      ">": "&gt;",
+      '"': "&quot;",
+      "'": "&#39;"
+    })[c]);
+  }
+  function shapeBadge(shapeArr) {
+    return `<span class="shape-badge">[${shapeArr.join(", ")}]</span>`;
+  }
+  function cellBg(v, maxAbs) {
+    if (v <= -1e8 || !isFinite(v)) return "background:#f1f3f7;";
+    if (maxAbs < 1e-12) return "";
+    const a = 0.06 + 0.55 * Math.min(1, Math.abs(v) / maxAbs);
+    return v >= 0 ? `background:rgba(36,86,214,${a.toFixed(3)});color:${a > 0.42 ? "#fff" : "inherit"};` : `background:rgba(194,72,31,${a.toFixed(3)});color:${a > 0.42 ? "#fff" : "inherit"};`;
+  }
+  function matrixHTML(M, opts = {}) {
+    const {
+      rowLabels = null,
+      colLabels = null,
+      precision = 4,
+      hlRow = -1,
+      hlCol = -1,
+      maxRows = 12,
+      maxCols = 16,
+      caption = null,
+      compact = false
+    } = opts;
+    if (!M || !M.length) return `<p class="stage-sub">No data \u2014 enter text to run the computation.</p>`;
+    const R = M.length, C = M[0].length;
+    const rN = Math.min(R, maxRows), cN = Math.min(C, maxCols);
+    let maxAbs = 1e-12;
+    for (let i = 0; i < rN; i++) for (let j = 0; j < cN; j++) {
+      const v = M[i][j];
+      if (isFinite(v) && v > -1e8) maxAbs = Math.max(maxAbs, Math.abs(v));
+    }
+    let h = `<div class="matrix-wrap"${caption ? ` aria-label="${esc(caption)}"` : ""}><table class="matrix">`;
+    if (colLabels) {
+      h += `<tr><th class="rowlab"></th>`;
+      for (let j = 0; j < cN; j++) h += `<th>${esc(colLabels[j])}</th>`;
+      if (C > cN) h += `<th>\u2026</th>`;
+      h += `</tr>`;
+    }
+    for (let i = 0; i < rN; i++) {
+      h += `<tr>`;
+      if (rowLabels) h += `<td class="rowlab" title="${esc(rowLabels[i])}">${esc(rowLabels[i])}</td>`;
+      for (let j = 0; j < cN; j++) {
+        const v = M[i][j];
+        const cls = [
+          i === hlRow ? "hl-row" : "",
+          j === hlCol ? "hl-col" : "",
+          v <= -1e8 ? "masked" : ""
+        ].join(" ");
+        const shown = compact && Math.abs(v) < 5e-5 && v !== 0 ? "0" : fmt(v, precision);
+        h += `<td class="${cls}" style="${cellBg(v, maxAbs)}" title="row ${i}, col ${j} = ${fmt(v, 6)}">${shown}</td>`;
+      }
+      if (C > cN) h += `<td>\u2026</td>`;
+      h += `</tr>`;
+    }
+    if (R > rN) h += `<tr><td class="rowlab">\u2026</td><td colspan="${cN}">+${R - rN} more rows</td></tr>`;
+    h += `</table></div>`;
+    return h;
+  }
+  function barsHTML(items, opts = {}) {
+    const { precision = 4, maxAbs = null, colorByKept = false } = opts;
+    const mx = maxAbs ?? Math.max(1e-9, ...items.map((d) => Math.abs(d.value)));
+    return `<div class="bars">` + items.map((d) => {
+      const w = Math.max(1.5, Math.abs(d.value) / mx * 100);
+      const cls = ["bar-row", d.kept === false ? "cut" : "kept", d.selected ? "selected" : ""].join(" ");
+      return `<div class="${cls}" title="${esc(d.label)} = ${fmt(d.value, 6)}${d.extra ? " \xB7 " + esc(d.extra) : ""}">
+      <span class="tok">${esc(d.label)}</span>
+      <span class="bar-track"><span class="bar-fill" style="width:${w.toFixed(1)}%"></span></span>
+      <span class="num">${fmt(d.value, precision)}${colorByKept && d.kept === false ? " \u2715" : ""}</span>
+    </div>`;
+    }).join("") + `</div>`;
+  }
+  function tokenChips(tokens, ids, opts = {}) {
+    const { newIndex = -1, selected = -1, clickable = false, action = "selQuery" } = opts;
+    return tokens.map((t, i) => {
+      const cls = ["token-chip", i === newIndex ? "new" : "", i === selected ? "qsel" : "", clickable ? "clickable" : ""].join(" ");
+      const attr = clickable ? ` data-action="${action}" data-i="${i}" role="button" tabindex="0" title="Select token ${esc(t)}"` : ` title="token ${esc(t)} \u2192 id ${ids[i]}"`;
+      return `<span class="${cls}"${attr}>${esc(t)}<span class="id">id ${ids[i]}</span></span>`;
+    }).join("");
+  }
+  function legendHTML() {
+    return `<div class="legend" aria-hidden="true">
+    <span><span class="sw" style="background:rgba(36,86,214,.55)"></span>positive</span>
+    <span><span class="sw" style="background:rgba(194,72,31,.55)"></span>negative</span>
+    <span>deeper = larger magnitude \xB7 every cell also shows its number</span>
+  </div>`;
+  }
+  function statsGrid(name, M) {
+    const s = statsOf(M);
+    const sh = `[${M.length}, ${M[0]?.length ?? 0}]`;
+    return `<div class="insp-grid">
+    <div class="insp-stat"><div class="k">Tensor</div><div class="v">${esc(name)}</div></div>
+    <div class="insp-stat"><div class="k">Shape</div><div class="v">${sh}</div></div>
+    <div class="insp-stat"><div class="k">dtype</div><div class="v">float64</div></div>
+    <div class="insp-stat"><div class="k">Min</div><div class="v">${fmt(s.min)}</div></div>
+    <div class="insp-stat"><div class="k">Max</div><div class="v">${fmt(s.max)}</div></div>
+    <div class="insp-stat"><div class="k">Mean</div><div class="v">${fmt(s.mean)}</div></div>
+  </div>`;
+  }
+  function geluSVG(hlX = null) {
+    const W = 460, H = 200, P = 28;
+    const xs = [], minX = -3, maxX = 3;
+    const gelu2 = (x) => 0.5 * x * (1 + Math.tanh(Math.sqrt(2 / Math.PI) * (x + 0.044715 * x ** 3)));
+    for (let i = 0; i <= 120; i++) xs.push(minX + (maxX - minX) * i / 120);
+    const ys = xs.map(gelu2);
+    const minY = Math.min(...ys), maxY = Math.max(...ys);
+    const X = (x) => P + (x - minX) / (maxX - minX) * (W - 2 * P);
+    const Y = (y) => H - P - (y - minY) / (maxY - minY) * (H - 2 * P);
+    const path = xs.map((x, i) => `${i ? "L" : "M"}${X(x).toFixed(1)},${Y(ys[i]).toFixed(1)}`).join(" ");
+    const zeroY = Y(0), zeroX = X(0);
+    return `<svg class="gelu-plot" id="geluPlot" viewBox="0 0 ${W} ${H}" width="100%" role="img" aria-label="GELU activation curve">
+    <line x1="${P}" y1="${zeroY}" x2="${W - P}" y2="${zeroY}" stroke="#c9d2e0"/>
+    <line x1="${zeroX}" y1="${P}" x2="${zeroX}" y2="${H - P}" stroke="#c9d2e0"/>
+    <path d="${path}" fill="none" stroke="#2456d6" stroke-width="2"/>
+    <circle id="geluDot" r="5" fill="#1a2332" style="display:none"/>
+    <text x="${W - P}" y="${zeroY - 6}" font-size="10" fill="#5b6474" text-anchor="end">x</text>
+    <text x="${zeroX + 6}" y="${P + 4}" font-size="10" fill="#5b6474">GELU(x)</text>
+    <text x="${P}" y="${H - 8}" font-size="10" fill="#5b6474">-3</text>
+    <text x="${W - P - 6}" y="${H - 8}" font-size="10" fill="#5b6474">+3</text>
+  </svg>
+  <div class="kv"><span class="k">hover readout</span><span class="v" id="geluReadout">${hlX === null ? "move over the curve" : `x=${fmt(hlX, 3)} \u2192 GELU=${fmt(gelu2(hlX), 4)}`}</span></div>`;
+  }
+
+  // js/viewsEncoder.js
+  var ENCODER_STAGES = [
+    { id: "tokenize", nav: "Tokenize", title: "Tokenization", sub: "Text \u2192 tokens \u2192 token IDs (toy tokenizer)", shape: "text \u2192 [seq]" },
+    { id: "embed", nav: "Embed", title: "Embedding Lookup", sub: "Token ID \u2192 embedding vector (toy deterministic table)", shape: "[seq] \u2192 [seq, d_model]" },
+    { id: "pos", nav: "Position", title: "Positional Encoding", sub: "Embedding + sinusoidal position code", shape: "[seq, d] + [seq, d]" },
+    { id: "qkv", nav: "Q / K / V", title: "Q, K, V Projection", sub: "One input, three learned linear projections", shape: "[seq, d] \xD7 [d, d]" },
+    { id: "heads", nav: "Heads", title: "Multi-Head Split", sub: "Reshape [seq, d_model] \u2192 [n_heads, seq, d_head]", shape: "[seq, d] \u2192 [h, seq, d_h]" },
+    { id: "attn", nav: "Attention", title: "Scaled Dot-Product Attention", sub: "softmax(QK\u1D40 / \u221Ad)V \u2014 the core operation", shape: "[seq, seq] \u2192 [seq, d_h]" },
+    { id: "concat", nav: "Concat+Proj", title: "Concatenate + Output Projection", sub: "Reunite heads, mix with W_O", shape: "[h,seq,d_h] \u2192 [seq, d]" },
+    { id: "ffn", nav: "FFN", title: "Feed-Forward Network", sub: "GELU(xW\u2081+b\u2081)W\u2082+b\u2082, per position", shape: "[seq, d] \u2192 [seq, d_ff] \u2192 [seq, d]" }
+  ];
+  function emptyState() {
+    return `<div class="simplify-note"><b>Empty input.</b> Type text above (or keep the demo \u201CThe cat sat\u201D) to run the computation.</div>`;
+  }
+  function renderEncoderStage(id, S2) {
+    const T = S2.encTrace, cfg = S2.config, P = cfg.precision;
+    const seq = T ? T.ids.length : 0;
+    if (!T || !seq) {
+      if (id === "tokenize") return vTokenize(S2);
+      return emptyState();
+    }
+    switch (id) {
+      case "tokenize":
+        return vTokenize(S2);
+      case "embed":
+        return vEmbed(S2);
+      case "pos":
+        return vPos(S2);
+      case "qkv":
+        return vQKV(S2);
+      case "heads":
+        return vHeads(S2);
+      case "attn":
+        return vAttn(S2);
+      case "concat":
+        return vConcat(S2);
+      case "ffn":
+        return vFFN(S2);
+      default:
+        return "";
+    }
+  }
+  function vTokenize(S2) {
+    const T = S2.encTrace, cfg = S2.config;
+    const rows = T.tokens.map((t, i) => {
+      const h = fnv1a(t);
+      return `<tr><td class="rowlab">${esc(t)}</td><td style="text-align:left">${h}</td><td>id ${T.ids[i]}</td></tr>`;
+    }).join("");
+    return `
+    <div class="simplify-note"><b>Educational simplification \xB7</b> Toy tokenizer: whitespace split + FNV-1a hash mod ${cfg.vocabSize}. Real GPT-family tokenizers use learned subword schemes (e.g. BPE), not hashing.</div>
+    <label for="encInput"><b>Input text</b></label>
+    <textarea class="input-text" id="encInput" rows="2">${esc(S2.encInput)}</textarea>
+    <div class="flow"><span class="tensor-box">\u201C${esc(S2.encInput)}\u201D</span><span class="arrow">\u2192</span><span class="op-box">split + hash</span><span class="arrow">\u2192</span><span class="tensor-box">[${T.ids.join(", ") || "\u2014"}]</span></div>
+    <div>${tokenChips(T.tokens, T.ids)}</div>
+    <div style="margin-top:8px">${shapeBadge([T.ids.length])} <span class="stage-sub">token ID sequence</span></div>
+    <div class="matrix-wrap"><table class="matrix">
+      <tr><th class="rowlab">token</th><th>FNV-1a hash</th><th>hash mod ${cfg.vocabSize}</th></tr>
+      ${rows || `<tr><td class="rowlab">\u2014</td><td>\u2014</td><td>\u2014</td></tr>`}
+    </table></div>
+    <div class="controls-row"><button class="btn small" data-action="inspect" data-tensor="ids">Inspect in Tensor Inspector \u2193</button></div>`;
+  }
+  function vEmbed(S2) {
+    const T = S2.encTrace, cfg = S2.config, P = cfg.precision;
+    const dCols2 = Array.from({ length: cfg.dModel }, (_, j) => `d${j + 1}`);
+    return `
+    <div class="simplify-note"><b>Educational simplification \xB7</b> Toy embedding table: seeded Gaussian values (seed ${cfg.seed}). Real embeddings are <i>learned during training</i> \u2014 never sampled at inference time.</div>
+    <div class="flow"><span class="tensor-box">ids [${T.ids.join(", ")}]</span><span class="arrow">\u2192 lookup row of E</span><span class="op-box">E \u2208 R^{${cfg.vocabSize}\xD7${cfg.dModel}}</span><span class="arrow">\u2192</span><span class="tensor-box">X</span></div>
+    <div>${shapeBadge([T.ids.length])} <span class="arrow">\u2192</span> ${shapeBadge([T.ids.length, cfg.dModel])}</div>
+    ${legendHTML()}
+    ${matrixHTML(T.X, { rowLabels: T.tokens.map((t, i) => `${t} (id ${T.ids[i]})`), colLabels: dCols2, precision: P, caption: "Embedding matrix" })}
+    <div class="controls-row"><span class="stage-sub">Hover any cell for its exact value.</span><button class="btn small" data-action="inspect" data-tensor="X">Inspect X \u2193</button></div>`;
+  }
+  function vPos(S2) {
+    const T = S2.encTrace, cfg = S2.config, P = cfg.precision;
+    const view = S2.embView;
+    const dCols2 = Array.from({ length: cfg.dModel }, (_, j) => `d${j + 1}`);
+    const tabs = [["X", "Embedding"], ["PE", "Position Encoding"], ["sum", "Embedding + Position"]].map(([v, l]) => `<button class="subtab${view === v ? " active" : ""}" data-action="embView" data-v="${v}">${l}</button>`).join("");
+    const M = view === "X" ? T.X : view === "PE" ? T.PE : T.Xpos;
+    const name = view === "X" ? "Embedding X" : view === "PE" ? "Positional encoding PE" : "Position-aware X + PE";
+    return `
+    <div class="flow"><span class="tensor-box">X ${shapeBadge([T.ids.length, cfg.dModel])}</span><span class="arrow">+</span><span class="tensor-box">PE (sin/cos) ${shapeBadge([T.ids.length, cfg.dModel])}</span><span class="arrow">\u2192</span><span class="tensor-box"><b>X + PE</b></span></div>
+    <div class="eq-block">PE(pos,2i) = sin(pos / 10000<sup>2i/d</sup>) &nbsp;&nbsp; PE(pos,2i+1) = cos(pos / 10000<sup>2i/d</sup>)</div>
+    <div class="subtabs" role="tablist">${tabs}</div>
+    <div><b>${name}</b> \xB7 X axis = position \u2192, Y axis = dimension \u2193, intensity = value</div>
+    ${legendHTML()}
+    ${matrixHTML(M, { rowLabels: T.tokens.map((t, i) => `pos ${i}: ${t}`), colLabels: dCols2, precision: P, caption: name })}
+    <div class="controls-row"><button class="btn small" data-action="inspect" data-tensor="Xpos">Inspect X+PE \u2193</button></div>`;
+  }
+  function vQKV(S2) {
+    const T = S2.encTrace, cfg = S2.config, P = cfg.precision;
+    const e = T.enc, w = T.weights.layers[0];
+    const q = S2.qkvTab;
+    const tabs = [["Q", "Q = XW_Q"], ["K", "K = XW_K"], ["V", "V = XW_V"]].map(([v, l]) => `<button class="subtab${q === v ? " active" : ""}" data-action="qkvTab" data-v="${v}">${l}</button>`).join("");
+    const W = q === "Q" ? w.WQ : q === "K" ? w.WK : w.WV;
+    const O = q === "Q" ? e.Q : q === "K" ? e.K : e.V;
+    const dCols2 = Array.from({ length: cfg.dModel }, (_, j) => `d${j + 1}`);
+    let calc = "";
+    if (S2.showCalc) {
+      const i = Math.min(S2.selQuery, T.ids.length - 1);
+      const terms = T.Xpos[i].map((x, k) => `${fmt(x, 3)}\xD7${fmt(W[k][0], 3)}`);
+      const sum = T.Xpos[i].reduce((a, x, k) => a + x * W[k][0], 0);
+      calc = `<div class="calc-box">${q}[${i},0] = X[${i}]\xB7W&lt;col 0&gt; = ${terms.slice(0, 4).join(" + ")}${terms.length > 4 ? " + \u2026" : ""} = <b>${fmt(sum, P)}</b> (matches the matrix \u2713)</div>`;
+    }
+    return `
+    <div class="flow"><span class="tensor-box">X+PE ${shapeBadge([T.ids.length, cfg.dModel])}</span></div>
+    <div class="flow"><span class="arrow">\u251C\u2500\u2500 \xD7 W_Q \u2192</span><b>Q</b><span class="arrow">\u251C\u2500\u2500 \xD7 W_K \u2192</span><b>K</b><span class="arrow">\u2514\u2500\u2500 \xD7 W_V \u2192</span><b>V</b></div>
+    <div class="subtabs">${tabs}</div>
+    <div class="flow"><span class="tensor-box">X ${shapeBadge([T.ids.length, cfg.dModel])}</span><span class="arrow">\xD7</span><span class="tensor-box">W_${q} ${shapeBadge([cfg.dModel, cfg.dModel])}</span><span class="arrow">\u2192</span><span class="tensor-box"><b>${q}</b> ${shapeBadge([T.ids.length, cfg.dModel])}</span></div>
+    <div><b>W_${q}</b> (toy learned-stand-in weights, seed ${cfg.seed})</div>
+    ${matrixHTML(W, { colLabels: dCols2, rowLabels: dCols2, precision: P, maxRows: 16, maxCols: 16, caption: `W_${q}` })}
+    <div><b>${q}</b> output</div>
+    ${matrixHTML(O, { rowLabels: T.tokens, colLabels: dCols2, precision: P, caption: q })}
+    <div class="controls-row">
+      <button class="btn small" data-action="toggleCalc">${S2.showCalc ? "Hide calculation" : "Show calculation"}</button>
+      <button class="btn small" data-action="inspect" data-tensor="${q}">Inspect ${q} \u2193</button>
+    </div>${calc}`;
+  }
+  function vHeads(S2) {
+    const T = S2.encTrace, cfg = S2.config, P = cfg.precision;
+    const e = T.enc, h = S2.selHead;
+    const pills = Array.from({ length: cfg.nHeads }, (_, i) => `<button class="subtab${h === i ? " active" : ""}" data-action="selHead" data-i="${i}">Head ${i + 1}</button>`).join("");
+    const dc = Array.from({ length: e.dHead }, (_, j) => `h${j + 1}`);
+    return `
+    <div class="flow"><span class="tensor-box">Q/K/V ${shapeBadge([T.ids.length, cfg.dModel])}</span><span class="arrow">\u2192 reshape \u2192</span><span class="tensor-box"><b>[${cfg.nHeads}, ${T.ids.length}, ${e.dHead}]</b></span></div>
+    <div class="eq-block">d_model = ${cfg.dModel},&nbsp; n_heads = ${cfg.nHeads},&nbsp; d_head = ${cfg.dModel}/${cfg.nHeads} = ${e.dHead}</div>
+    <div class="head-pills">${pills}</div>
+    <div><b>Head ${h + 1}</b> \u2014 Q slice ${shapeBadge([T.ids.length, e.dHead])}</div>
+    ${matrixHTML(e.Qh[h], { rowLabels: T.tokens, colLabels: dc, precision: P })}
+    <div><b>Head ${h + 1}</b> \u2014 K slice</div>
+    ${matrixHTML(e.Kh[h], { rowLabels: T.tokens, colLabels: dc, precision: P })}
+    <div><b>Head ${h + 1}</b> \u2014 V slice</div>
+    ${matrixHTML(e.Vh[h], { rowLabels: T.tokens, colLabels: dc, precision: P })}`;
+  }
+  function vAttn(S2) {
+    const T = S2.encTrace, cfg = S2.config, P = cfg.precision;
+    const e = T.enc, h = S2.selHead, a = e.attn[h];
+    const q = Math.min(S2.selQuery, T.ids.length - 1);
+    const pills = Array.from({ length: cfg.nHeads }, (_, i) => `<button class="subtab${h === i ? " active" : ""}" data-action="selHead" data-i="${i}">Head ${i + 1}</button>`).join("");
+    const steps = [["scores", "6.1 scores QK\u1D40"], ["scaled", "6.2 scaled \xF7\u221Ad"], ["weights", "6.3 softmax"], ["out", "6.4 \xD7V output"]].map(([v, l]) => `<button class="subtab${S2.attnView === v ? " active" : ""}" data-action="attnView" data-v="${v}">${l}</button>`).join("");
+    let body = "";
+    const tokLabs = T.tokens;
+    if (S2.attnView === "scores") {
+      body = `<div><b>Attention scores</b> Q\xD7K\u1D40 ${shapeBadge([T.ids.length, T.ids.length])} \u2014 raw query/key compatibility (not probabilities)</div>
+    ${matrixHTML(a.scores, { rowLabels: tokLabs.map((t) => `q:${t}`), colLabels: tokLabs.map((t) => `k:${t}`), precision: P, hlRow: q })}`;
+    } else if (S2.attnView === "scaled") {
+      body = `<div><b>Scaled scores</b> \xF7 \u221A${e.dHead} = \xF7 ${fmt(Math.sqrt(e.dHead), 4)} \u2014 keeps softmax inputs in a stable range</div>
+    <div class="eq-block">scaled = scores / \u221Ad_head = scores / ${fmt(Math.sqrt(e.dHead), 4)}</div>
+    ${matrixHTML(a.scaled, { rowLabels: tokLabs.map((t) => `q:${t}`), colLabels: tokLabs.map((t) => `k:${t}`), precision: P, hlRow: q })}`;
+    } else if (S2.attnView === "weights") {
+      const sums = a.weights.map((r) => r.reduce((x, y) => x + y, 0));
+      body = `<div><b>Attention weights</b> ${shapeBadge([T.ids.length, T.ids.length])} \u2014 each row is a distribution over keys. <span class="row-sum">Row sums: ${sums.map((s) => fmt(s, 4)).join(" \xB7 ")}</span></div>
+    ${matrixHTML(a.weights, { rowLabels: tokLabs.map((t) => `q:${t}`), colLabels: tokLabs.map((t) => `k:${t}`), precision: P, hlRow: q })}`;
+    } else {
+      const wrow = a.weights[q];
+      const contrib = T.tokens.map((t, j) => ({ label: `${t}`, value: wrow[j], kept: true, selected: j === q, extra: `V-row weight` }));
+      body = `<div><b>Context vectors</b> = weights \xD7 V ${shapeBadge([T.ids.length, e.dHead])} \u2014 query <b>${esc(T.tokens[q])}</b> highlighted</div>
+    ${matrixHTML(a.output, { rowLabels: tokLabs, colLabels: Array.from({ length: e.dHead }, (_, j) => `c${j + 1}`), precision: P, hlRow: q })}
+    <div style="margin-top:6px"><b>Which tokens contributed to \u201C${esc(T.tokens[q])}\u201D?</b> (attention weights, row ${q})</div>
+    ${barsHTML(contrib, { precision: P })}`;
+    }
+    let calc = "";
+    if (S2.showCalc) {
+      const k = q;
+      const terms = e.Qh[h][q].map((x, d) => x * e.Kh[h][k][d]);
+      const sum = terms.reduce((x, y) => x + y, 0);
+      calc = `<div class="calc-box">scores[${q},${k}] = Q[${q}]\xB7K[${k}] = ${terms.map((t) => fmt(t, 3)).join(" + ")} = <b>${fmt(sum, P)}</b> \u2192 \xF7\u221A${e.dHead} = <b>${fmt(sum / Math.sqrt(e.dHead), P)}</b> \u2713 matches the matrices</div>`;
+    }
+    return `
+    <div class="eq-block">Attention(Q,K,V) = softmax(QK\u1D40 / \u221Ad<sub>head</sub>) \xB7 V &nbsp;&nbsp;\xB7&nbsp;&nbsp; head ${h + 1}/${cfg.nHeads}, d_head=${e.dHead}</div>
+    <div class="head-pills">${pills}</div>
+    <div><b>Query token:</b></div>
+    <div>${tokenChips(T.tokens, T.ids, { selected: q, clickable: true })}</div>
+    <div class="subtabs">${steps}</div>
+    <div class="attn-flow">
+      ${["scores", "scaled", "weights", "out"].map((v, i) => `${i ? '<span class="arrow">\u2192</span>' : ""}<span class="attn-node${S2.attnView === v ? " active" : ""}" data-action="attnView" data-v="${v}" role="button" tabindex="0">${["QK\u1D40", "\xF7\u221Ad", "softmax", "\xD7V"][i]}</span>`).join("")}
+    </div>
+    ${body}
+    <div class="controls-row"><button class="btn small" data-action="toggleCalc">${S2.showCalc ? "Hide calculation" : "Show calculation"}</button></div>${calc}`;
+  }
+  function vConcat(S2) {
+    const T = S2.encTrace, cfg = S2.config, P = cfg.precision;
+    const e = T.enc, w = T.weights.layers[0];
+    const dCols2 = Array.from({ length: cfg.dModel }, (_, j) => `d${j + 1}`);
+    const headList = Array.from({ length: cfg.nHeads }, (_, i) => `<span class="tensor-box">Head ${i + 1} ctx ${shapeBadge([T.ids.length, e.dHead])}</span>`).join(' <span class="arrow">+</span> ');
+    return `
+    <div class="flow">${headList}</div>
+    <div class="flow"><span class="arrow">\u2193 concatenate (reorder only, no math) \u2193</span></div>
+    <div class="flow"><span class="tensor-box"><b>concat</b> ${shapeBadge([T.ids.length, cfg.dModel])}</span><span class="arrow">\xD7 W_O ${shapeBadge([cfg.dModel, cfg.dModel])} \u2192</span><span class="tensor-box"><b>output</b> ${shapeBadge([T.ids.length, cfg.dModel])}</span></div>
+    <div class="eq-block">out = concat(head<sub>1</sub> \u2026 head<sub>${cfg.nHeads}</sub>) \xB7 W<sub>O</sub> &nbsp;&nbsp;\u2014&nbsp;&nbsp; concatenate \u2260 project</div>
+    <div><b>Concatenated heads</b></div>
+    ${matrixHTML(e.concat, { rowLabels: T.tokens, colLabels: dCols2, precision: P })}
+    <div><b>After W_O</b></div>
+    ${matrixHTML(e.proj, { rowLabels: T.tokens, colLabels: dCols2, precision: P })}
+    <div class="controls-row"><button class="btn small" data-action="inspect" data-tensor="proj">Inspect output \u2193</button></div>`;
+  }
+  function vFFN(S2) {
+    const T = S2.encTrace, cfg = S2.config, P = cfg.precision;
+    const f = T.enc.ffn;
+    const dCols2 = Array.from({ length: cfg.dModel }, (_, j) => `d${j + 1}`);
+    const fCols = Array.from({ length: cfg.dFF }, (_, j) => `f${j + 1}`);
+    return `
+    <div class="eq-block">FFN(x) = GELU(xW<sub>1</sub>+b<sub>1</sub>)W<sub>2</sub>+b<sub>2</sub></div>
+    <div class="flow"><span class="tensor-box">attn out ${shapeBadge([T.ids.length, cfg.dModel])}</span><span class="arrow">\u2192 \xD7W\u2081 \u2192</span><span class="tensor-box">hidden ${shapeBadge([T.ids.length, cfg.dFF])}</span><span class="arrow">\u2192 GELU \u2192</span><span class="tensor-box">\xD7W\u2082 \u2192</span><span class="tensor-box"><b>final</b> ${shapeBadge([T.ids.length, cfg.dModel])}</span></div>
+    <div class="subtabs"><button class="subtab${S2.ffnView === "pre" ? " active" : ""}" data-action="ffnView" data-v="pre">Hidden (pre-GELU)</button><button class="subtab${S2.ffnView === "act" ? " active" : ""}" data-action="ffnView" data-v="act">Hidden (GELU)</button><button class="subtab${S2.ffnView === "out" ? " active" : ""}" data-action="ffnView" data-v="out">Output</button><button class="subtab${S2.ffnView === "gelu" ? " active" : ""}" data-action="ffnView" data-v="gelu">GELU graph</button></div>
+    ${S2.ffnView === "gelu" ? `${geluSVG()}<div class="eq-block">GELU(x) \u2248 0.5x\xB7(1 + tanh(\u221A(2/\u03C0)\xB7(x + 0.044715x\xB3)))</div>` : S2.ffnView === "pre" ? `<div><b>Hidden pre-activation</b> xW\u2081+b\u2081 ${shapeBadge([T.ids.length, cfg.dFF])}</div>${matrixHTML(f.hiddenPre, { rowLabels: T.tokens, colLabels: fCols, precision: P })}` : S2.ffnView === "act" ? `<div><b>Hidden activated</b> GELU(\xB7) ${shapeBadge([T.ids.length, cfg.dFF])} \u2014 negatives squash toward 0</div>${matrixHTML(f.hiddenAct, { rowLabels: T.tokens, colLabels: fCols, precision: P })}` : `<div><b>FFN output</b> (final encoder representation) ${shapeBadge([T.ids.length, cfg.dModel])}</div>${matrixHTML(f.output, { rowLabels: T.tokens, colLabels: dCols2, precision: P })}`}
+    <div class="simplify-note"><b>Note \xB7</b> This Mode-A path follows the spec pipeline (no residuals/LayerNorm). Production encoders add residual + norm around attention and FFN \u2014 see the full pre-LN block in <b>Mode B</b>.</div>`;
+  }
+
+  // js/viewsDecoder.js
+  var DECODER_STAGES = [
+    { id: "dtok", nav: "Tokenize", title: "Tokenization", sub: "Prompt \u2192 tokens \u2192 IDs (toy tokenizer)", shape: "text \u2192 [seq]" },
+    { id: "demb", nav: "Embed+Pos", title: "Embedding + Positional Encoding", sub: "IDs \u2192 vectors + sinusoidal codes", shape: "[seq] \u2192 [seq, d]" },
+    { id: "dln1", nav: "LayerNorm 1", title: "LayerNorm (pre-attention)", sub: "Per-token feature normalization", shape: "[seq, d] \u2192 [seq, d]" },
+    { id: "dqkv", nav: "Q/K/V+Heads", title: "Q/K/V Projection + Head Split", sub: "Project, then reshape per head", shape: "[seq,d] \u2192 [h,seq,d_h]" },
+    { id: "dmask", nav: "Mask+Attn", title: "Causal Mask + Attention", sub: "No peeking at the future, then softmax(QK\u1D40/\u221Ad)V", shape: "[seq, seq]" },
+    { id: "dres1", nav: "Concat+Res", title: "Concat + W_O + Residual", sub: "Heads reunite, project, add back to stream", shape: "x + attn" },
+    { id: "dffn", nav: "LN+FFN+Res", title: "LayerNorm + FFN + Residual", sub: "Second half of the pre-LN block", shape: "x\u2032 + FFN" },
+    { id: "dblocks", nav: "Stack \xD7N", title: "Transformer Block Stack", sub: "Repeat the block N times (progressive disclosure)", shape: "\xD7N blocks" },
+    { id: "dfinal", nav: "Final LN", title: "Final LayerNorm", sub: "Normalize last block's output", shape: "[seq, d]" },
+    { id: "dlm", nav: "LM Head", title: "LM Head + Logits", sub: "Hidden states \u2192 raw vocabulary scores", shape: "[seq, d] \u2192 [seq, V]" },
+    { id: "dtemp", nav: "Temp+Soft", title: "Temperature + Softmax", sub: "Shape the distribution, normalize to probabilities", shape: "[V] \u2192 [V], \u03A3=1" },
+    { id: "dsample", nav: "Sample+Loop", title: "Sampling + Generation Loop", sub: "Draw a token, append, repeat (autoregressive)", shape: "[V] \u2192 1 token" }
+  ];
+  function renderDecoderStage(id, S2) {
+    const T = S2.decTrace;
+    if (!T || !T.ids.length) {
+      if (id === "dtok" || id === "dsample") return id === "dtok" ? vDTok(S2) : vDSample(S2);
+      return `<div class="simplify-note"><b>Empty context.</b> Enter a prompt to run the decoder.</div>`;
+    }
+    switch (id) {
+      case "dtok":
+        return vDTok(S2);
+      case "demb":
+        return vDEmb(S2);
+      case "dln1":
+        return vDLN1(S2);
+      case "dqkv":
+        return vDQKV(S2);
+      case "dmask":
+        return vDMask(S2);
+      case "dres1":
+        return vDRes1(S2);
+      case "dffn":
+        return vDFFN(S2);
+      case "dblocks":
+        return vDBlocks(S2);
+      case "dfinal":
+        return vDFinal(S2);
+      case "dlm":
+        return vDLM(S2);
+      case "dtemp":
+        return vDTemp(S2);
+      case "dsample":
+        return vDSample(S2);
+      default:
+        return "";
+    }
+  }
+  function blockOf(S2) {
+    const T = S2.decTrace;
+    return T.blocks[Math.min(S2.selBlock, T.blocks.length - 1)];
+  }
+  function blockBar(S2) {
+    const T = S2.decTrace;
+    if (T.blocks.length < 2) return "";
+    return `<div class="controls-row"><span class="stage-sub">Block:</span>` + T.blocks.map((_, l) => `<button class="subtab${S2.selBlock === l ? " active" : ""}" data-action="selBlock" data-i="${l}">Block ${l + 1}</button>`).join("") + `</div>`;
+  }
+  function dCols(cfg) {
+    return Array.from({ length: cfg.dModel }, (_, j) => `d${j + 1}`);
+  }
+  function vDTok(S2) {
+    const T = S2.decTrace, cfg = S2.config;
+    const promptIds = T.promptIds || [];
+    const genStart = promptIds.length;
+    return `
+    <div class="simplify-note"><b>Educational simplification \xB7</b> Toy tokenizer: whitespace split + FNV-1a hash mod ${cfg.vocabSize}. <b>Inference demo</b> \u2014 weights are fixed; nothing is trained here.</div>
+    <label for="decInput"><b>Prompt</b> (Reset re-tokenizes this; generated tokens append below)</label>
+    <textarea class="input-text" id="decInput" rows="2">${esc(S2.decPrompt)}</textarea>
+    <div class="controls-row"><button class="btn small primary" data-action="resetGen">Tokenize prompt & Reset</button></div>
+    <div><b>Current context</b> (${T.ids.length} tokens):</div>
+    <div>${T.tokens.map((t, i) => `<span class="token-chip${i >= genStart ? " new" : ""}" title="${i >= genStart ? "generated" : "prompt"} token \u2192 id ${T.ids[i]}">${esc(t)}<span class="id">id ${T.ids[i]}</span></span>`).join("")}</div>
+    <div style="margin-top:6px">${shapeBadge([T.ids.length])} <span class="stage-sub">context IDs: [${T.ids.join(", ")}]</span></div>`;
+  }
+  function vDEmb(S2) {
+    const T = S2.decTrace, cfg = S2.config, P = cfg.precision;
+    const view = S2.embView;
+    const tabs = [["X", "Embedding"], ["PE", "Position"], ["sum", "X + PE"]].map(([v, l]) => `<button class="subtab${view === v ? " active" : ""}" data-action="embView" data-v="${v}">${l}</button>`).join("");
+    const M = view === "X" ? T.X : view === "PE" ? T.PE : T.Xpos;
+    return `
+    <div class="flow"><span class="tensor-box">ids ${shapeBadge([T.ids.length])}</span><span class="arrow">\u2192 E \u2192</span><span class="tensor-box">X</span><span class="arrow">+ PE \u2192</span><span class="tensor-box"><b>X+PE</b> ${shapeBadge([T.ids.length, cfg.dModel])}</span></div>
+    <div class="subtabs">${tabs}</div>
+    ${legendHTML()}
+    ${matrixHTML(M, { rowLabels: T.tokens.map((t, i) => `pos ${i}: ${t}`), colLabels: dCols(cfg), precision: P })}
+    <div class="controls-row"><button class="btn small" data-action="inspect" data-tensor="dXpos">Inspect X+PE \u2193</button></div>`;
+  }
+  function vDLN1(S2) {
+    const T = S2.decTrace, cfg = S2.config, P = cfg.precision;
+    const b = blockOf(S2);
+    const i = Math.min(S2.selQuery, T.ids.length - 1);
+    const ln = b.ln1;
+    return `
+    ${blockBar(S2)}
+    <div class="eq-block">LN(x) = \u03B3 \u2299 (x \u2212 \u03BC)/\u03C3 + \u03B2 &nbsp;&nbsp;\xB7&nbsp;&nbsp; \u03BC,\u03C3 over the ${cfg.dModel} features of <b>each token separately</b></div>
+    <div><b>Token:</b></div><div>${tokenChips(T.tokens, T.ids, { selected: i, clickable: true })}</div>
+    <div class="kv">
+      <span class="k">input row x</span><span class="v">[${T.blocks[Math.min(S2.selBlock, T.blocks.length - 1)] ? fmtRow(blockInput(S2)[i], P) : ""}]</span>
+      <span class="k">mean \u03BC</span><span class="v">${fmt(ln.means[i], P)}</span>
+      <span class="k">variance \u03C3\xB2</span><span class="v">${fmt(ln.variances[i], P)}</span>
+      <span class="k">normalized</span><span class="v">[${fmtRow(ln.normalized[i], P)}] <span class="row-sum">mean\u22480 var\u22481</span></span>
+      <span class="k">\u03B3, \u03B2</span><span class="v">\u03B3=1\u2026 \u03B2=0\u2026 (toy init) \u2192 output = normalized</span>
+    </div>
+    <div><b>LayerNorm output</b> ${shapeBadge([T.ids.length, cfg.dModel])}</div>
+    ${matrixHTML(ln.output, { rowLabels: T.tokens, colLabels: dCols(cfg), precision: P, hlRow: i })}
+    <div class="simplify-note"><b>LayerNorm \u2260 BatchNorm.</b> Normalization is over the feature dimension per token \u2014 never across the batch or sequence.</div>`;
+  }
+  function blockInput(S2) {
+    const T = S2.decTrace, l = Math.min(S2.selBlock, T.blocks.length - 1);
+    return l === 0 ? T.Xpos : T.blocks[l - 1].output;
+  }
+  function fmtRow(row, P) {
+    return row.map((v) => fmt(v, Math.min(P, 3))).join(", ");
+  }
+  function vDQKV(S2) {
+    const T = S2.decTrace, cfg = S2.config, P = cfg.precision;
+    const b = blockOf(S2), l = Math.min(S2.selBlock, T.blocks.length - 1), w = T.weights.layers[l];
+    const q = S2.qkvTab, h = S2.selHead;
+    const tabs = [["Q", "Q"], ["K", "K"], ["V", "V"]].map(([v, lbl]) => `<button class="subtab${q === v ? " active" : ""}" data-action="qkvTab" data-v="${v}">${lbl}</button>`).join("");
+    const pills = Array.from({ length: cfg.nHeads }, (_, i) => `<button class="subtab${h === i ? " active" : ""}" data-action="selHead" data-i="${i}">Head ${i + 1}</button>`).join("");
+    const full = q === "Q" ? b.Q : q === "K" ? b.K : b.V;
+    const hs = q === "Q" ? b.Qh : q === "K" ? b.Kh : b.Vh;
+    const W = q === "Q" ? w.WQ : q === "K" ? w.WK : w.WV;
+    return `
+    ${blockBar(S2)}
+    <div class="subtabs">${tabs}</div>
+    <div class="flow"><span class="tensor-box">LN\u2081(x) ${shapeBadge([T.ids.length, cfg.dModel])}</span><span class="arrow">\xD7 W_${q} \u2192</span><span class="tensor-box"><b>${q}</b> ${shapeBadge([T.ids.length, cfg.dModel])}</span><span class="arrow">\u2192 split \u2192</span><span class="tensor-box"><b>${q} head ${h + 1}</b> ${shapeBadge([T.ids.length, b.dHead])}</span></div>
+    <div class="head-pills">${pills}</div>
+    <div><b>W_${q}</b> (block ${l + 1} toy weights)</div>
+    ${matrixHTML(W, { colLabels: dCols(cfg), rowLabels: dCols(cfg), precision: P, maxRows: 16, maxCols: 16 })}
+    <div><b>${q} head ${h + 1}</b></div>
+    ${matrixHTML(hs[h], { rowLabels: T.tokens, colLabels: Array.from({ length: b.dHead }, (_, j) => `h${j + 1}`), precision: P })}
+    <details style="margin-top:6px"><summary style="cursor:pointer;font-weight:600">Show full (unsplit) ${q}</summary>
+    ${matrixHTML(full, { rowLabels: T.tokens, colLabels: dCols(cfg), precision: P })}</details>`;
+  }
+  function vDMask(S2) {
+    const T = S2.decTrace, cfg = S2.config, P = cfg.precision;
+    const b = blockOf(S2), h = S2.selHead, a = b.attn[h];
+    const q = Math.min(S2.selQuery, T.ids.length - 1);
+    const pills = Array.from({ length: cfg.nHeads }, (_, i) => `<button class="subtab${h === i ? " active" : ""}" data-action="selHead" data-i="${i}">Head ${i + 1}</button>`).join("");
+    const steps = [["scores", "scores"], ["masked", "masked"], ["weights", "weights"], ["out", "\xD7V out"]].map(([v, l]) => `<button class="subtab${S2.dAttnView === v ? " active" : ""}" data-action="dAttnView" data-v="${v}">${l}</button>`).join("");
+    const labs = T.tokens;
+    let body = "";
+    if (S2.dAttnView === "scores") {
+      body = `<div><b>Unmasked scaled scores</b> QK\u1D40/\u221Ad \u2014 every query <i>could</i> see every key:</div>
+    <div class="resid-diagram">       ${labs.map((t) => t.slice(0, 4).padEnd(4)).join(" ")}
+${labs.map((t, i) => `Q:${t.slice(0, 4).padEnd(4)}` + labs.map(() => " \u2713  ").join(" ")).join("\n")}</div>
+    ${matrixHTML(a.scaled, { rowLabels: labs.map((t) => `q:${t}`), colLabels: labs.map((t) => `k:${t}`), precision: P, hlRow: q })}`;
+    } else if (S2.dAttnView === "masked") {
+      body = `<div><b>After causal mask</b> \u2014 token may attend to itself and earlier tokens, never future ones. Masked entries are <b>\u2212\u221E</b> <i>before</i> softmax:</div>
+    <div class="resid-diagram">       ${labs.map((t) => t.slice(0, 4).padEnd(4)).join(" ")}
+${labs.map((t, i) => `Q:${t.slice(0, 4).padEnd(4)}` + labs.map((_, j) => j > i ? " \u2715  " : " \u2713  ").join(" ")).join("\n")}</div>
+    ${matrixHTML(S2.showMask ? a.masked : a.scaled, { rowLabels: labs.map((t) => `q:${t}`), colLabels: labs.map((t) => `k:${t}`), precision: P, hlRow: q })}
+    <div class="controls-row"><button class="btn small" data-action="toggleMask">${S2.showMask ? "Hide mask" : "Show mask"}</button>
+    <span class="stage-sub">${S2.showMask ? "Mask ON: future = \u2212\u221E" : "Mask OFF (for comparison only \u2014 the model always masks)"}</span></div>`;
+    } else if (S2.dAttnView === "weights") {
+      const sums = a.weights.map((r) => r.reduce((x, y) => x + y, 0));
+      const wrow = a.weights[q];
+      body = `<div><b>Attention weights</b> (softmax after masking). <span class="row-sum">Row sums: ${sums.map((s) => fmt(s, 4)).join(" \xB7 ")}</span> Future columns are exactly 0.</div>
+    ${matrixHTML(a.weights, { rowLabels: labs.map((t) => `q:${t}`), colLabels: labs.map((t) => `k:${t}`), precision: P, hlRow: q })}
+    <div><b>\u201C${esc(T.tokens[q])}\u201D drew context from:</b></div>
+    ${barsHTML(labs.map((t, j) => ({ label: t, value: wrow[j], kept: true, selected: j === q })), { precision: P })}`;
+    } else {
+      body = `<div><b>Head ${h + 1} output</b> = weights \xD7 V ${shapeBadge([T.ids.length, b.dHead])}:</div>
+    ${matrixHTML(a.output, { rowLabels: labs, colLabels: Array.from({ length: b.dHead }, (_, j) => `c${j + 1}`), precision: P, hlRow: q })}`;
+    }
+    return `
+    ${blockBar(S2)}
+    <div class="eq-block">scores = QK\u1D40/\u221Ad \u2192 <b>mask j&gt;i to \u2212\u221E</b> \u2192 softmax \u2192 \xD7V &nbsp;&nbsp;\xB7&nbsp;&nbsp; masking happens <b>before</b> softmax</div>
+    <div class="head-pills">${pills}</div>
+    <div><b>Query token:</b></div><div>${tokenChips(T.tokens, T.ids, { selected: q, clickable: true })}</div>
+    <div class="subtabs">${steps}</div>${body}`;
+  }
+  function vDRes1(S2) {
+    const T = S2.decTrace, cfg = S2.config, P = cfg.precision;
+    const b = blockOf(S2), l = Math.min(S2.selBlock, T.blocks.length - 1);
+    const xin = blockInput(S2);
+    const i = Math.min(S2.selQuery, T.ids.length - 1);
+    return `
+    ${blockBar(S2)}
+    <div class="resid-diagram">             \u250C\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2510
+x \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2192 \u2502               \u2502
+\u2502                \u2502   Attention   \u2502
+\u2502                \u2502  (masked mha) \u2502
+\u2502                \u2514\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u252C\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2518
+\u2502                        \u2502  proj = concat\xB7W_O
+\u2514\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500 + \u25C4\u2500\u2500\u2500\u2500\u2500\u2500\u2518
+                 \u2193
+            x + proj  (residual stream preserved)</div>
+    <div class="flow"><span class="tensor-box">concat ${shapeBadge([T.ids.length, cfg.dModel])}</span><span class="arrow">\xD7 W_O \u2192</span><span class="tensor-box">proj</span><span class="arrow">+ x \u2192</span><span class="tensor-box"><b>resid\u2081</b> ${shapeBadge([T.ids.length, cfg.dModel])}</span></div>
+    <div><b>Token:</b></div><div>${tokenChips(T.tokens, T.ids, { selected: i, clickable: true })}</div>
+    <div class="kv">
+      <span class="k">x (stream in)</span><span class="v">[${fmtRow(xin[i], P)}]</span>
+      <span class="k">proj (attn)</span><span class="v">[${fmtRow(b.proj[i], P)}]</span>
+      <span class="k">x + proj</span><span class="v">[${fmtRow(b.resid1[i], P)}] \u2713 element-wise sum</span>
+    </div>
+    <div class="subtabs"><button class="subtab${S2.resView === "concat" ? " active" : ""}" data-action="resView" data-v="concat">Concat</button><button class="subtab${S2.resView === "proj" ? " active" : ""}" data-action="resView" data-v="proj">Proj</button><button class="subtab${S2.resView === "res" ? " active" : ""}" data-action="resView" data-v="res">x + proj</button></div>
+    ${matrixHTML(S2.resView === "concat" ? b.concat : S2.resView === "proj" ? b.proj : b.resid1, { rowLabels: T.tokens, colLabels: dCols(cfg), precision: P, hlRow: i })}`;
+  }
+  function vDFFN(S2) {
+    const T = S2.decTrace, cfg = S2.config, P = cfg.precision;
+    const b = blockOf(S2);
+    const i = Math.min(S2.selQuery, T.ids.length - 1);
+    const f = b.ffn;
+    const tabs = [["pre", "LN\u2082 out"], ["hid", "GELU hidden"], ["out", "FFN out"], ["res", "resid\u2082 = x\u2032+FFN"], ["gelu", "GELU graph"]].map(([v, l]) => `<button class="subtab${S2.dffnView === v ? " active" : ""}" data-action="dffnView" data-v="${v}">${l}</button>`).join("");
+    let body = "";
+    if (S2.dffnView === "pre") body = `${matrixHTML(b.ln2.output, { rowLabels: T.tokens, colLabels: dCols(cfg), precision: P, hlRow: i })}`;
+    else if (S2.dffnView === "hid") body = `<div><b>GELU hidden</b> ${shapeBadge([T.ids.length, cfg.dFF])}</div>${matrixHTML(f.hiddenAct, { rowLabels: T.tokens, colLabels: Array.from({ length: cfg.dFF }, (_, j) => `f${j + 1}`), precision: P, hlRow: i })}`;
+    else if (S2.dffnView === "out") body = `${matrixHTML(f.output, { rowLabels: T.tokens, colLabels: dCols(cfg), precision: P, hlRow: i })}`;
+    else if (S2.dffnView === "gelu") body = `${geluSVG()}<div class="eq-block">GELU(x) \u2248 0.5x\xB7(1 + tanh(\u221A(2/\u03C0)\xB7(x + 0.044715x\xB3)))</div>`;
+    else body = `<div class="kv"><span class="k">x\u2032 (resid\u2081)</span><span class="v">[${fmtRow(b.resid1[i], P)}]</span><span class="k">FFN out</span><span class="v">[${fmtRow(f.output[i], P)}]</span><span class="k">x\u2032 + FFN</span><span class="v">[${fmtRow(b.output[i], P)}] \u2713</span></div>
+    ${matrixHTML(b.output, { rowLabels: T.tokens, colLabels: dCols(cfg), precision: P, hlRow: i })}`;
+    return `
+    ${blockBar(S2)}
+    <div class="resid-diagram">x\u2032 \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2192 + \u25C4\u2500\u2500 FFN(LN\u2082(x\u2032))
+                 \u2193
+          x\u2033 = x\u2032 + FFN(LN\u2082(x\u2032))   [pre-LN block complete]</div>
+    <div><b>Token:</b></div><div>${tokenChips(T.tokens, T.ids, { selected: i, clickable: true })}</div>
+    <div class="subtabs">${tabs}</div>${body}`;
+  }
+  function vDBlocks(S2) {
+    const T = S2.decTrace, cfg = S2.config;
+    const cards = T.blocks.map((b, l) => `
+    ${l ? '<div class="block-arrow">\u2193</div>' : ""}
+    <div class="block-card${S2.selBlock === l ? " active" : ""}" data-action="selBlock" data-i="${l}" role="button" tabindex="0">
+      <span class="bt">Block ${l + 1}</span> <span class="bs">LN\u2192masked-attn\u2192+res \u2192 LN\u2192FFN\u2192+res \xB7 [${T.ids.length}, ${cfg.dModel}] \u2192 [${T.ids.length}, ${cfg.dModel}]</span>
+    </div>`).join("");
+    return `
+    <div class="simplify-note"><b>Pre-LN decoder stack \xB7</b> ${cfg.nLayers} block${cfg.nLayers > 1 ? "s" : ""}. Only shapes are shown here \u2014 select a block, then revisit stages 3\u20137 to inspect its internals (progressive disclosure).</div>
+    <div class="flow"><span class="tensor-box">X+PE ${shapeBadge([T.ids.length, cfg.dModel])}</span></div>
+    <div class="block-stack">${cards}</div>
+    <div class="flow"><span class="tensor-box"><b>h<sub>N</sub></b> ${shapeBadge([T.ids.length, cfg.dModel])}</span></div>
+    <div class="eq-block">h<sub>l+1</sub> = Block<sub>l</sub>(h<sub>l</sub>) &nbsp;&nbsp;\xB7&nbsp;&nbsp; currently inspecting: <b>Block ${S2.selBlock + 1}</b></div>`;
+  }
+  function vDFinal(S2) {
+    const T = S2.decTrace, cfg = S2.config, P = cfg.precision;
+    return `
+    <div class="flow"><span class="tensor-box">h<sub>N</sub> ${shapeBadge([T.ids.length, cfg.dModel])}</span><span class="arrow">\u2192 LayerNorm \u2192</span><span class="tensor-box"><b>final states</b> ${shapeBadge([T.ids.length, cfg.dModel])}</span></div>
+    ${matrixHTML(T.finalLN.output, { rowLabels: T.tokens, colLabels: dCols(cfg), precision: P })}`;
+  }
+  function vDLM(S2) {
+    const T = S2.decTrace, cfg = S2.config, P = cfg.precision;
+    const last = T.ids.length - 1;
+    const items = T.logits[last].map((v, id) => ({ id, tok: T.vocab[id], v })).sort((a, b) => b.v - a.v).slice(0, S2.topN).map((d) => ({ label: `${d.tok}`, value: d.v, kept: true, extra: `id ${d.id}` }));
+    const mx = Math.max(...items.map((d) => Math.abs(d.value)));
+    return `
+    <div class="flow"><span class="tensor-box">final ${shapeBadge([T.ids.length, cfg.dModel])}</span><span class="arrow">\xD7 W<sub>LM</sub> ${shapeBadge([cfg.dModel, cfg.vocabSize])} \u2192</span><span class="tensor-box"><b>logits</b> ${shapeBadge([T.ids.length, cfg.vocabSize])}</span></div>
+    <div class="simplify-note"><b>Logit \u2260 probability.</b> Each row holds one raw score per vocabulary token. Only the <b>last row</b> (position ${last}, \u201C${esc(T.tokens[last])}\u201D) predicts the next token.</div>
+    <div class="controls-row"><span class="stage-sub">Show top</span>
+      ${[5, 12, 20].map((n) => `<button class="subtab${S2.topN === n ? " active" : ""}" data-action="topN" data-i="${n}">${n}</button>`).join("")}
+      <span class="stage-sub">of ${cfg.vocabSize}</span></div>
+    ${barsHTML(items, { precision: P, maxAbs: mx })}
+    <div class="controls-row"><button class="btn small" data-action="inspect" data-tensor="logits">Inspect full logits \u2193</button></div>`;
+  }
+  function vDTemp(S2) {
+    const T = S2.decTrace, cfg = S2.config, P = cfg.precision;
+    const st = S2.decStep;
+    const order = st.probs.map((p, id) => ({ id, p, z: st.logitsLast[id], s: st.scaled[id] })).sort((a, b) => b.p - a.p).slice(0, S2.topN);
+    const sum = st.probs.reduce((a, b) => a + b, 0);
+    return `
+    <div class="eq-block">p<sub>i</sub> = e<sup>z<sub>i</sub>/T</sup> / \u03A3<sub>j</sub> e<sup>z<sub>j</sub>/T</sup> &nbsp;&nbsp;\xB7&nbsp;&nbsp; T = ${cfg.temperature.toFixed(2)} &nbsp;&nbsp;\xB7&nbsp;&nbsp; <span class="row-sum">\u03A3p = ${sum.toFixed(4)}</span></div>
+    <div class="controls-row"><label for="tempSlider2"><b>Temperature</b> (logits \xF7 T <i>before</i> softmax)</label>
+      <input type="range" id="tempSlider2" min="0.1" max="2" step="0.05" value="${cfg.temperature}" data-action="temp" aria-label="Temperature" />
+      <span class="val shape-badge">T = ${cfg.temperature.toFixed(2)}</span></div>
+    <div class="stage-sub">Lower T \u2192 sharper (peaked) \xB7 Higher T \u2192 flatter (uniform). Shape only \u2014 not intelligence.</div>
+    <div class="matrix-wrap"><table class="matrix">
+      <tr><th class="rowlab">token</th><th>logit z</th><th>z / T</th><th>e<sup>z/T</sup></th><th>probability</th></tr>
+      ${order.map((d) => {
+      const e = Math.exp(d.s - Math.max(...st.scaled));
+      return `<tr><td class="rowlab">${esc(T.vocab[d.id])} <span class="stage-sub">id ${d.id}</span></td><td>${fmt(d.z, P)}</td><td>${fmt(d.s, P)}</td><td>${fmt(e, P)}</td><td><b>${fmt(d.p, P)}</b></td></tr>`;
+    }).join("")}
+    </table></div>
+    ${barsHTML(order.map((d) => ({ label: T.vocab[d.id], value: d.p, kept: true })), { precision: P })}`;
+  }
+  function vDSample(S2) {
+    const T = S2.decTrace, cfg = S2.config, P = cfg.precision;
+    if (!T || !T.ids.length) return `<div class="simplify-note"><b>Empty context.</b> Go to stage 1 and tokenize a prompt first.</div>`;
+    const st = S2.decStep;
+    const sm = st.sampling;
+    const order = sm.candidates.map((c) => ({ ...c, tok: T.vocab[c.id] })).sort((a, b) => b.prob - a.prob).slice(0, S2.topN);
+    const keptN = sm.candidates.filter((c) => c.kept).length;
+    const methodBtns = [["greedy", "Greedy"], ["top-k", "Top-k"], ["top-p", "Top-p"]].map(([v, l]) => `<button class="subtab${cfg.method === v ? " active" : ""}" data-action="method" data-v="${v}">${l}</button>`).join("");
+    let methodCtl = "";
+    if (cfg.method === "top-k") methodCtl = `<span class="stage-sub">k =</span>` + [1, 3, 5, 10].map((k) => `<button class="subtab${cfg.k === k ? " active" : ""}" data-action="k" data-i="${k}">${k}</button>`).join("");
+    else if (cfg.method === "top-p") methodCtl = `<input type="range" min="0.1" max="1" step="0.05" value="${cfg.p}" data-action="p" aria-label="Top-p threshold" style="width:120px;accent-color:var(--accent)" /> <span class="shape-badge">p = ${cfg.p.toFixed(2)}</span>`;
+    else methodCtl = `<span class="stage-sub">argmax \u2014 always the single best token</span>`;
+    const hist = S2.history.map((h, i) => `
+    <div class="hist-step${S2.selHist === i ? " active" : ""}" data-action="selHist" data-i="${i}" role="button" tabindex="0">
+      <span class="step">step ${h.step}</span>${esc(h.contextTokens.join(" "))} <span class="newtok">+ ${esc(h.selectedToken)}</span>
+      <span class="stage-sub">p=${fmt(h.probs[h.selectedId], 4)} \xB7 ${h.method}${h.method === "top-k" ? " k=" + h.k : h.method === "top-p" ? " p=" + h.p : ""}</span>
+    </div>`).join("");
+    let histDetail = "";
+    if (S2.selHist >= 0 && S2.history[S2.selHist]) {
+      const h = S2.history[S2.selHist];
+      const ho = h.probs.map((p, id) => ({ id, p })).sort((a, b) => b.p - a.p).slice(0, 10);
+      histDetail = `<div><b>Step ${h.step}</b> distribution (selected: \u201C${esc(h.selectedToken)}\u201D id ${h.selectedId}):</div>
+    ${barsHTML(ho.map((d) => ({ label: T.vocab[d.id], value: d.p, kept: true, selected: d.id === h.selectedId })), { precision: P })}`;
+    }
+    return `
+    <div class="eq-block">${cfg.method === "greedy" ? "next = argmax(p)" : cfg.method === "top-k" ? `keep top ${cfg.k}, renormalize, sample` : `keep smallest set with cumsum \u2265 ${cfg.p.toFixed(2)}, renormalize, sample`} &nbsp;&nbsp;\xB7&nbsp;&nbsp; eligible: <b>${keptN}</b> / ${cfg.vocabSize}</div>
+    <div class="subtabs">${methodBtns}</div>
+    <div class="controls-row">${methodCtl}</div>
+    ${barsHTML(order.map((d) => ({ label: d.tok, value: d.prob, kept: d.kept, selected: d.id === sm.selectedId, extra: `id ${d.id}` })), { precision: P, colorByKept: true })}
+    <div class="kv"><span class="k">selected (preview)</span><span class="v">\u201C${esc(T.vocab[sm.selectedId])}\u201D id ${sm.selectedId} \xB7 p=${fmt(st.probs[sm.selectedId], P)} \u2014 press <b>Next Token</b> to append it</span></div>
+    <div class="controls-row">
+      <button class="btn primary" data-action="nextToken">Next Token \u2192</button>
+      <button class="btn" data-action="autoGen">${S2.autoGen ? "Pause" : "Auto Generate"}</button>
+      <button class="btn" data-action="stepBack" ${S2.history.length ? "" : "disabled"}>Step Back</button>
+      <button class="btn ghost" data-action="resetGen">Reset</button>
+    </div>
+    <div><b>Generation history</b> \u2014 click any step to inspect the exact distribution that produced it:</div>
+    <div class="gen-history">${hist || `<span class="stage-sub">No tokens generated yet. Press \u201CNext Token\u201D.</span>`}</div>
+    ${histDetail}
+    <div class="simplify-note"><b>Autoregressive loop \xB7</b> the model generates a token, appends it to the sequence, and uses the resulting context to predict the next token. Sampling seed = ${cfg.seed} \u2295 step, so runs reproduce exactly.</div>`;
+  }
+
+  // js/tests.js
+  var approx = (a, b, tol = 1e-6) => Math.abs(a - b) <= tol;
+  function runTests() {
+    const results = [];
+    const t = (name, fn) => {
+      try {
+        fn();
+        results.push({ name, pass: true });
+      } catch (e) {
+        results.push({ name, pass: false, error: String(e?.message ?? e) });
+      }
+    };
+    const assert = (cond, msg) => {
+      if (!cond) throw new Error(msg);
+    };
+    t("FNV-1a: known vector ('hello' -> 1335831723)", () => {
+      assert(fnv1a("hello") === 1335831723, `got ${fnv1a("hello")}`);
+    });
+    t("FNV-1a: empty string -> offset basis", () => {
+      assert(fnv1a("") === 2166136261, `got ${fnv1a("")}`);
+    });
+    t("Tokenization: 'The cat sat' -> 3 tokens, ids in range", () => {
+      const { tokens, ids } = tokenize("The cat sat", 32);
+      assert(tokens.join("|") === "The|cat|sat", JSON.stringify(tokens));
+      assert(ids.length === 3 && ids.every((id) => id >= 0 && id < 32), JSON.stringify(ids));
+    });
+    t("Tokenization: deterministic (same input -> same ids)", () => {
+      const a = tokenize("The cat sat", 32).ids;
+      const b = tokenize("The cat sat", 32).ids;
+      assert(JSON.stringify(a) === JSON.stringify(b), "not deterministic");
+    });
+    t("Softmax: rows sum to 1", () => {
+      const m = softmax([[1, 2, 3], [-1, 0, 1]]);
+      m.forEach((row) => assert(approx(row.reduce((a, b) => a + b, 0), 1, 1e-9), "row != 1"));
+    });
+    t("Causal mask: future positions get ~0 probability after softmax", () => {
+      const scores = [[1, 1, 1], [1, 1, 1], [1, 1, 1]];
+      const w = softmax(applyCausalMask(scores));
+      assert(w[0][1] < 1e-6 && w[0][2] < 1e-6, JSON.stringify(w[0]));
+      assert(w[1][2] < 1e-6 && w[1][0] > 0.4, JSON.stringify(w[1]));
+      assert(w[2].every((x) => x > 0.3 && x < 0.35), JSON.stringify(w[2]));
+    });
+    t("Attention: output shape [seq,dHead]", () => {
+      const cfg = { dModel: 8, dFF: 16, nHeads: 2, nLayers: 1, vocabSize: 32 };
+      const tr = forwardEncoder("The cat sat", cfg, 42);
+      const [seq, dm] = [tr.ids.length, cfg.dModel];
+      assert(tr.enc.attn.length === 2, "head count");
+      assert(tr.enc.attn[0].output.length === seq && tr.enc.attn[0].output[0].length === dm / 2, "out shape");
+      assert(tr.enc.attn[0].weights.length === seq && tr.enc.attn[0].weights[0].length === seq, "weights shape");
+    });
+    t("Multi-head: split + concat restores [seq,dModel]", () => {
+      const X = createMatrix(4, 8, (r, c) => r * 8 + c);
+      const { heads } = splitHeads(X, 2);
+      assert(heads.length === 2 && heads[0].length === 4 && heads[0][0].length === 4, "split shape");
+      assert(JSON.stringify(concatHeads(heads)) === JSON.stringify(X), "concat mismatch");
+    });
+    t("LayerNorm: normalized rows have ~0 mean, ~1 variance", () => {
+      const X = [[1, 2, 3, 4], [5, -2, 0, 3]];
+      const g = [1, 1, 1, 1], b = [0, 0, 0, 0];
+      const { normalized } = layerNorm(X, g, b);
+      normalized.forEach((row) => {
+        const mean = row.reduce((a, x) => a + x, 0) / row.length;
+        const v = row.reduce((a, x) => a + (x - mean) ** 2, 0) / row.length;
+        assert(approx(mean, 0, 1e-9), `mean ${mean}`);
+        assert(approx(v, 1, 1e-3), `var ${v}`);
+      });
+    });
+    t("GELU: known values", () => {
+      assert(approx(gelu(0), 0, 1e-9), `gelu(0)=${gelu(0)}`);
+      assert(approx(gelu(1), 0.8412, 1e-3), `gelu(1)=${gelu(1)}`);
+      assert(approx(gelu(-1), -0.1588, 1e-3), `gelu(-1)=${gelu(-1)}`);
+    });
+    t("Temperature: applied before softmax (lower T sharpens)", () => {
+      const logits = [2, 1, 0.5];
+      const sharp = softmaxVec(applyTemperature(logits, 0.1));
+      const flat = softmaxVec(applyTemperature(logits, 2));
+      assert(sharp[0] > 0.99, JSON.stringify(sharp));
+      assert(flat[0] < sharp[0] && flat[2] > sharp[2], JSON.stringify(flat));
+    });
+    t("Top-k: exactly k candidates eligible", () => {
+      const probs = [0.5, 0.2, 0.15, 0.1, 0.05];
+      const r = topKSample(probs, 3, mulberry32(1));
+      assert(r.candidates.filter((c) => c.kept).length === 3, JSON.stringify(r.candidates));
+    });
+    t("Top-p: kept set reaches cumulative threshold", () => {
+      const probs = [0.5, 0.2, 0.15, 0.1, 0.05];
+      const r = topPSample(probs, 0.9, mulberry32(1));
+      const kept = r.candidates.filter((c) => c.kept);
+      const cum = kept.reduce((a, c) => a + c.prob, 0);
+      assert(cum >= 0.9 - 1e-9, `cum=${cum}`);
+      const sorted = kept.map((c) => c.prob).sort((a, b) => b - a);
+      assert(cum - sorted[sorted.length - 1] < 0.9 + 1e-9, "not minimal set");
+    });
+    t("Greedy: selects argmax", () => {
+      const r = greedySample([0.1, 0.7, 0.2]);
+      assert(r.selectedId === 1, `got ${r.selectedId}`);
+    });
+    t("Generation: appending a token grows sequence by 1", () => {
+      const cfg = { dModel: 8, dFF: 16, nHeads: 2, nLayers: 2, vocabSize: 32 };
+      const a = forwardDecoder([1, 2], ["The", "cat"], cfg, 42);
+      const b = forwardDecoder([1, 2, 9], ["The", "cat", "sat"], cfg, 42);
+      assert(b.logits.length === a.logits.length + 1, "seq did not grow");
+      assert(b.logits[0].length === 32, "logit width != vocab");
+    });
+    t("Determinism: same input+config+seed -> identical logits", () => {
+      const cfg = { dModel: 8, dFF: 16, nHeads: 2, nLayers: 2, vocabSize: 32 };
+      const a = forwardDecoder([1, 2], ["The", "cat"], cfg, 42);
+      const b = forwardDecoder([1, 2], ["The", "cat"], cfg, 42);
+      assert(JSON.stringify(a.logits) === JSON.stringify(b.logits), "logits differ");
+    });
+    t("Causal attention in decoder: no future leakage", () => {
+      const cfg = { dModel: 8, dFF: 16, nHeads: 2, nLayers: 1, vocabSize: 32 };
+      const tr = forwardDecoder([3, 7, 11], ["a", "b", "c"], cfg, 7);
+      const w = tr.blocks[0].attn[0].weights;
+      assert(w[0][1] < 1e-6 && w[0][2] < 1e-6, "row 0 leaks");
+      assert(w[1][2] < 1e-6, "row 1 leaks");
+      assert(approx(w[2].reduce((x, y) => x + y, 0), 1, 1e-9), "row 2 sum");
+    });
+    t("Invalid head config throws", () => {
+      let threw = false;
+      try {
+        splitHeads([[1, 2, 3]], 2);
+      } catch {
+        threw = true;
+      }
+      assert(threw, "should throw when d_model % n_heads != 0");
+    });
+    return results;
+  }
+
+  // js/app.js
+  var S = {
+    mode: "encoder",
+    stage: 0,
+    config: { dModel: 8, dFF: 16, nHeads: 2, nLayers: 2, vocabSize: 32, temperature: 1, method: "top-k", k: 5, p: 0.9, seed: 42, precision: 4 },
+    encInput: "The cat sat",
+    decPrompt: "The cat",
+    decIds: [],
+    decTokens: [],
+    promptLen: 0,
+    history: [],
+    sampleCounter: 0,
+    selHist: -1,
+    encTrace: null,
+    decTrace: null,
+    decStep: null,
+    truncated: false,
+    // view selections
+    selHead: 0,
+    selQuery: 0,
+    selBlock: 0,
+    embView: "sum",
+    qkvTab: "Q",
+    attnView: "weights",
+    dAttnView: "weights",
+    ffnView: "out",
+    dffnView: "res",
+    resView: "res",
+    showMask: true,
+    showCalc: false,
+    showMore: false,
+    showMath: false,
+    topN: 12,
+    selTensor: "ids",
+    playing: false,
+    playTimer: null,
+    autoGen: false,
+    autoTimer: null
+  };
+  var $ = (id) => document.getElementById(id);
+  var stages = () => S.mode === "encoder" ? ENCODER_STAGES : DECODER_STAGES;
+  var explanations = () => S.mode === "encoder" ? ENCODER_EXPLANATIONS : DECODER_EXPLANATIONS;
+  function configError() {
+    const c = S.config;
+    if (c.dModel % c.nHeads !== 0) return `Invalid configuration: d_model (${c.dModel}) must be divisible by n_heads (${c.nHeads}).`;
+    return null;
+  }
+  function recomputeEncoder() {
+    const words = S.encInput.trim().split(/\s+/).filter(Boolean);
+    S.truncated = words.length > 12;
+    const text = S.truncated ? words.slice(0, 12).join(" ") : S.encInput;
+    S.encTrace = forwardEncoder(text, S.config, S.config.seed);
+  }
+  function resetDecoder() {
+    const { tokens, ids } = tokenize(S.decPrompt, S.config.vocabSize);
+    S.decTokens = tokens.slice(0, 16);
+    S.decIds = ids.slice(0, 16);
+    S.promptLen = S.decIds.length;
+    S.history = [];
+    S.sampleCounter = 0;
+    S.selHist = -1;
+    recomputeDecoder();
+  }
+  function recomputeDecoder() {
+    S.decTrace = forwardDecoder(S.decIds, S.decTokens, S.config, S.config.seed);
+    S.decTrace.promptIds = S.decIds.slice(0, S.promptLen);
+    if (S.decIds.length) {
+      const c = S.config;
+      S.decStep = decodeLastPosition(S.decTrace, {
+        temperature: c.temperature,
+        method: c.method,
+        k: c.k,
+        p: c.p,
+        sampleSeed: c.seed + S.sampleCounter * 1013904223 >>> 0
+      });
+    } else S.decStep = null;
+  }
+  function recomputeAll() {
+    const err = configError();
+    $("configError").textContent = err || "";
+    $("configError").classList.toggle("show", !!err);
+    if (err) return false;
+    recomputeEncoder();
+    recomputeDecoder();
+    S.selQuery = Math.min(S.selQuery, Math.max(0, (S.mode === "encoder" ? S.encTrace.ids.length : S.decIds.length) - 1));
+    S.selHead = Math.min(S.selHead, S.config.nHeads - 1);
+    S.selBlock = Math.min(S.selBlock, S.config.nLayers - 1);
+    return true;
+  }
+  function nextToken() {
+    if (!S.decStep || S.decIds.length >= 16) return;
+    const st = S.decStep, c = S.config;
+    const id = st.sampling.selectedId;
+    const tok = S.decTrace.vocab[id];
+    S.history.push({
+      step: S.history.length + 1,
+      contextIds: [...S.decIds],
+      contextTokens: [...S.decTokens],
+      logitsLast: [...st.logitsLast],
+      probs: [...st.probs],
+      selectedId: id,
+      selectedToken: tok,
+      method: c.method,
+      k: c.k,
+      p: c.p,
+      temperature: c.temperature
+    });
+    S.decIds.push(id);
+    S.decTokens.push(tok);
+    S.sampleCounter++;
+    S.selHist = S.history.length - 1;
+    S.selQuery = S.decIds.length - 1;
+    recomputeDecoder();
+    renderDynamic();
+  }
+  function stepBack() {
+    if (!S.history.length) return;
+    S.history.pop();
+    S.decIds.pop();
+    S.decTokens.pop();
+    S.sampleCounter = Math.max(0, S.sampleCounter - 1);
+    S.selHist = S.history.length - 1;
+    recomputeDecoder();
+    renderDynamic();
+  }
+  function setAutoGen(on) {
+    S.autoGen = on;
+    clearInterval(S.autoTimer);
+    if (on) {
+      S.autoTimer = setInterval(() => {
+        if (S.decIds.length >= 16) {
+          setAutoGen(false);
+          renderDynamic();
+          return;
+        }
+        nextToken();
+      }, 1500);
+    }
+  }
+  function selectHTML(key, options, label) {
+    return `<div class="cfg"><label for="cfg_${key}">${label}</label>
+    <select id="cfg_${key}" data-cfg="${key}">${options.map((o) => `<option value="${o}"${S.config[key] === o ? " selected" : ""}>${o}</option>`).join("")}</select></div>`;
+  }
+  function renderConfig() {
+    const c = S.config;
+    $("configBar").innerHTML = `
+    ${selectHTML("dModel", [4, 8, 16], "d_model")}
+    ${selectHTML("dFF", [8, 16, 32], "d_ff")}
+    ${selectHTML("nHeads", [1, 2, 4], "heads")}
+    ${selectHTML("nLayers", [1, 2, 4], "blocks")}
+    ${selectHTML("vocabSize", [16, 32, 64], "vocab")}
+    <div class="cfg"><label for="cfg_temperature">temperature</label>
+      <span><input type="range" id="cfg_temperature" min="0.1" max="2" step="0.05" value="${c.temperature}" data-cfg-range="temperature" aria-label="Temperature" />
+      <span class="val" id="tempVal">${c.temperature.toFixed(2)}</span></span></div>
+    <div class="cfg"><label for="cfg_method">sampling</label>
+      <select id="cfg_method" data-cfg="method">${["greedy", "top-k", "top-p"].map((o) => `<option${c.method === o ? " selected" : ""}>${o}</option>`).join("")}</select></div>
+    ${c.method === "top-k" ? selectHTML("k", [1, 3, 5, 10], "top-k") : ""}
+    ${c.method === "top-p" ? `<div class="cfg"><label for="cfg_p">top-p</label>
+      <span><input type="range" id="cfg_p" min="0.1" max="1" step="0.05" value="${c.p}" data-cfg-range="p" aria-label="Top-p" />
+      <span class="val" id="pVal">${c.p.toFixed(2)}</span></span></div>` : ""}
+    ${selectHTML("precision", [2, 3, 4], "decimals")}
+    <div class="cfg"><label>&nbsp;</label><span class="stage-sub">deterministic \xB7 seed ${c.seed}</span></div>`;
+  }
+  var STAGE_DEFAULT_TENSOR = {
+    tokenize: "ids",
+    embed: "X",
+    pos: "Xpos",
+    qkv: "Q",
+    heads: "Qh",
+    attn: "W",
+    concat: "proj",
+    ffn: "FFNout",
+    dtok: "dids",
+    demb: "dXpos",
+    dln1: "ln1",
+    dqkv: "dQh",
+    dmask: "dW",
+    dres1: "dresid1",
+    dffn: "dblockOut",
+    dblocks: "dblockOut",
+    dfinal: "finalLN",
+    dlm: "logits",
+    dtemp: "probs",
+    dsample: "probs"
+  };
+  function renderPipe() {
+    const st = stages();
+    $("pipeList").innerHTML = st.map((s, i) => `<button class="pipe-item${i === S.stage ? " active" : ""}${i < S.stage ? " done" : ""}" data-stage="${i}" aria-current="${i === S.stage}">
+      <span class="pipe-num">${i < S.stage ? "\u2713" : i + 1}</span>
+      <span><span class="t">${esc(s.nav)}</span><span class="s">${esc(s.shape)}</span></span>
+    </button>`).join("");
+    $("stagePos").textContent = `Stage ${S.stage + 1} / ${st.length}`;
+    $("progressDots").innerHTML = st.map((_, i) => `<span class="${i <= S.stage ? "on" : ""}"></span>`).join("");
+  }
+  function genBarHTML() {
+    if (S.mode !== "decoder") return "";
+    const T = S.decTrace;
+    return `<div class="controls-row" style="background:#f6f8fb;border:1px solid var(--line);border-radius:8px;padding:7px 10px">
+    <span class="stage-sub"><b>Context (${T ? T.ids.length : 0}/16):</b> ${T ? esc(T.tokens.join(" ")) : ""}</span>
+    <span style="flex:1"></span>
+    <button class="btn small primary" data-action="nextToken">Next Token \u2192</button>
+    <button class="btn small" data-action="autoGen">${S.autoGen ? "Pause" : "Auto"}</button>
+    <button class="btn small" data-action="stepBack" ${S.history.length ? "" : "disabled"}>Back</button>
+    <button class="btn small ghost" data-action="resetGen">Reset</button>
+  </div>`;
+  }
+  function encInputBarHTML() {
+    if (S.mode !== "encoder" || stages()[S.stage].id === "tokenize") return "";
+    return `<div class="controls-row"><input class="input-text" id="encInputMini" style="min-height:0" value="${esc(S.encInput)}" aria-label="Input text" />
+    <button class="btn small" data-action="applyEncInput">Run</button></div>`;
+  }
+  function renderStage() {
+    const st = stages()[S.stage];
+    $("stageTitle").textContent = `${S.stage + 1}. ${st.title}`;
+    $("stageSub").textContent = `${st.sub} \xB7 ${st.shape}`;
+    const body = S.mode === "encoder" ? renderEncoderStage(st.id, S) : renderDecoderStage(st.id, S);
+    $("stageView").innerHTML = genBarHTML() + encInputBarHTML() + (S.truncated && S.mode === "encoder" ? `<div class="simplify-note"><b>Viz cap \xB7</b> Showing the first 12 tokens so matrices stay inspectable.</div>` : "") + body;
+    wireGelu();
+  }
+  function mathDetailHTML() {
+    const st = stages()[S.stage];
+    const c = S.config, P = c.precision;
+    const back = (inner) => `<div class="calc-box">${inner}</div>`;
+    try {
+      if (S.mode === "encoder") {
+        const T = S.encTrace;
+        if (!T || !T.ids.length) return "";
+        if (st.id === "tokenize") return back(T.tokens.map((t) => `FNV-1a(\u201C${esc(t)}\u201D) = ${fnv1a(t)} \u2192 mod ${c.vocabSize} = <b>${T.ids[T.tokens.indexOf(t)]}</b>`).join("<br>"));
+        if (st.id === "attn") {
+          const a = T.enc.attn[S.selHead], q = Math.min(S.selQuery, T.ids.length - 1);
+          const exps = a.scaled[q].map((x) => Math.exp(x - Math.max(...a.scaled[q])));
+          const sum = exps.reduce((x, y) => x + y, 0);
+          return back(`row q=${q} (head ${S.selHead + 1}):<br>scaled=[${a.scaled[q].map((x) => fmt(x, 3)).join(", ")}]<br>exp=[${exps.map((x) => fmt(x, 3)).join(", ")}] \u03A3=${fmt(sum, 4)}<br>weights=[${a.weights[q].map((x) => fmt(x, P)).join(", ")}] \u03A3=<b>${fmt(a.weights[q].reduce((x, y) => x + y, 0), 4)}</b>`);
+        }
+        if (st.id === "qkv" || st.id === "concat") {
+          const w = T.weights.layers[0];
+          return back(`Toy weights: seeded Gaussian \xD7 \u221A(1/d) from seed ${c.seed} (stream \u201CL0|W${S.qkvTab || "O"}\u201D).<br>Real weights are <b>learned in training</b>; the seed only makes this demo reproducible.`);
+        }
+      } else {
+        const T = S.decTrace;
+        if (!T || !T.ids.length) return "";
+        const b = T.blocks[Math.min(S.selBlock, T.blocks.length - 1)];
+        if (st.id === "dln1" || st.id === "dfinal") {
+          const ln = st.id === "dln1" ? b.ln1 : T.finalLN;
+          const i = Math.min(S.selQuery, T.ids.length - 1);
+          return back(`token \u201C${esc(T.tokens[i])}\u201D: \u03BC=${fmt(ln.means[i])}, \u03C3\xB2=${fmt(ln.variances[i])} \u2192 normalized row mean\u22480, var\u22481, then \xD7\u03B3(1)+\u03B2(0).`);
+        }
+        if (st.id === "dmask") {
+          const a = b.attn[S.selHead];
+          const leaked = a.weights.map((r, i) => r.slice(i + 1).reduce((x, y) => x + y, 0));
+          return back(`Future-mass per query row after softmax: [${leaked.map((x) => fmt(x, 6)).join(", ")}] \u2014 all <b>exactly 0</b> \u2713 (mask applied <i>before</i> softmax as \u2212\u221E).`);
+        }
+        if (st.id === "dtemp" && S.decStep) {
+          const sum = S.decStep.probs.reduce((x, y) => x + y, 0);
+          return back(`softmax(z/T): max logit ${fmt(Math.max(...S.decStep.logitsLast))} \u2192 T=${c.temperature.toFixed(2)} \u2192 <b>\u03A3p=${fmt(sum, 6)}</b> \u2713`);
+        }
+        if (st.id === "dsample" && S.decStep) {
+          const sm = S.decStep.sampling;
+          return back(`${esc(c.method)}: ${sm.candidates.filter((x) => x.kept).length} eligible \u2192 sampled id <b>${sm.selectedId}</b> (\u201C${esc(T.vocab[sm.selectedId])}\u201D) \xB7 sampling seed = ${c.seed} \u2295 step ${S.sampleCounter}.`);
+        }
+      }
+    } catch {
+      return "";
+    }
+    return "";
+  }
+  function renderExplain() {
+    const e = explanations()[S.stage];
+    $("explainBox").innerHTML = `
+    <h3>What happens?</h3><p>${esc(e.what)}</p>
+    <h3>Why?</h3><p>${esc(e.why)}</p>
+    <h3>Shape</h3><div class="eq-block">${esc(e.shape)}</div>
+    ${e.equation ? `<h3>Key equation</h3><div class="eq-block">${esc(e.equation)}</div>` : ""}
+    <div class="controls-row">
+      <button class="link-btn" data-action="explainMore">${S.showMore ? "Hide explanation \u25B2" : "Explain this \u25B8"}</button>
+      <button class="link-btn" data-action="explainMath">${S.showMath ? "Hide the math \u25B2" : "Show me the math \u25B8"}</button>
+    </div>
+    <div class="more${S.showMore ? " show" : ""}">${esc(e.more)}</div>
+    ${S.showMath ? mathDetailHTML() : ""}`;
+  }
+  function currentTensors() {
+    const c = S.config, T = S.mode === "encoder" ? S.encTrace : S.decTrace;
+    if (!T || !T.ids.length) return [];
+    const dH = (n) => Array.from({ length: n }, (_, j) => `h${j + 1}`);
+    const dc = Array.from({ length: c.dModel }, (_, j) => `d${j + 1}`);
+    const df = Array.from({ length: c.dFF }, (_, j) => `f${j + 1}`);
+    if (S.mode === "encoder") {
+      const e = T.enc, w = T.weights.layers[0], h2 = Math.min(S.selHead, c.nHeads - 1), a2 = e.attn[h2];
+      return [
+        { key: "ids", label: "Token IDs", M: T.ids.map((id) => [id]), rowLabels: T.tokens, colLabels: ["id"] },
+        { key: "X", label: "Embedding X", M: T.X, rowLabels: T.tokens, colLabels: dc },
+        { key: "PE", label: "Positional encoding", M: T.PE, rowLabels: T.tokens, colLabels: dc },
+        { key: "Xpos", label: "X + PE", M: T.Xpos, rowLabels: T.tokens, colLabels: dc },
+        { key: "WQ", label: "W_Q", M: w.WQ, rowLabels: dc, colLabels: dc },
+        { key: "Q", label: "Q", M: e.Q, rowLabels: T.tokens, colLabels: dc },
+        { key: "WK", label: "W_K", M: w.WK, rowLabels: dc, colLabels: dc },
+        { key: "K", label: "K", M: e.K, rowLabels: T.tokens, colLabels: dc },
+        { key: "WV", label: "W_V", M: w.WV, rowLabels: dc, colLabels: dc },
+        { key: "V", label: "V", M: e.V, rowLabels: T.tokens, colLabels: dc },
+        { key: "Qh", label: `Q head ${h2 + 1}`, M: e.Qh[h2], rowLabels: T.tokens, colLabels: dH(e.dHead) },
+        { key: "Kh", label: `K head ${h2 + 1}`, M: e.Kh[h2], rowLabels: T.tokens, colLabels: dH(e.dHead) },
+        { key: "S", label: `Scores QK\u1D40 (h${h2 + 1})`, M: a2.scores, rowLabels: T.tokens, colLabels: T.tokens },
+        { key: "Ssc", label: `Scaled \xF7\u221A${e.dHead} (h${h2 + 1})`, M: a2.scaled, rowLabels: T.tokens, colLabels: T.tokens },
+        { key: "W", label: `Attention weights (h${h2 + 1})`, M: a2.weights, rowLabels: T.tokens, colLabels: T.tokens },
+        { key: "C", label: `Context out (h${h2 + 1})`, M: a2.output, rowLabels: T.tokens, colLabels: dH(e.dHead) },
+        { key: "concat", label: "Concat heads", M: e.concat, rowLabels: T.tokens, colLabels: dc },
+        { key: "WO", label: "W_O", M: w.WO, rowLabels: dc, colLabels: dc },
+        { key: "proj", label: "Attention output", M: e.proj, rowLabels: T.tokens, colLabels: dc },
+        { key: "W1", label: "FFN W\u2081", M: w.W1, rowLabels: dc, colLabels: df },
+        { key: "hidPre", label: "FFN hidden pre-GELU", M: e.ffn.hiddenPre, rowLabels: T.tokens, colLabels: df },
+        { key: "hidAct", label: "FFN hidden GELU", M: e.ffn.hiddenAct, rowLabels: T.tokens, colLabels: df },
+        { key: "W2", label: "FFN W\u2082", M: w.W2, rowLabels: df, colLabels: dc },
+        { key: "FFNout", label: "FFN output (final)", M: e.ffn.output, rowLabels: T.tokens, colLabels: dc }
+      ];
+    }
+    const l = Math.min(S.selBlock, T.blocks.length - 1), b = T.blocks[l];
+    const h = Math.min(S.selHead, c.nHeads - 1), a = b.attn[h];
+    const last = T.ids.length - 1;
+    const list = [
+      { key: "dids", label: "Context IDs", M: T.ids.map((id) => [id]), rowLabels: T.tokens, colLabels: ["id"] },
+      { key: "dXpos", label: "X + PE", M: T.Xpos, rowLabels: T.tokens, colLabels: dc },
+      { key: "ln1", label: `Block ${l + 1} \xB7 LN\u2081 out`, M: b.ln1.output, rowLabels: T.tokens, colLabels: dc },
+      { key: "dQh", label: `Block ${l + 1} \xB7 Q head ${h + 1}`, M: b.Qh[h], rowLabels: T.tokens, colLabels: dH(b.dHead) },
+      { key: "dKh", label: `Block ${l + 1} \xB7 K head ${h + 1}`, M: b.Kh[h], rowLabels: T.tokens, colLabels: dH(b.dHead) },
+      { key: "dS", label: `Block ${l + 1} \xB7 scores (h${h + 1})`, M: a.scores, rowLabels: T.tokens, colLabels: T.tokens },
+      { key: "dM", label: `Block ${l + 1} \xB7 masked (h${h + 1})`, M: a.masked, rowLabels: T.tokens, colLabels: T.tokens },
+      { key: "dW", label: `Block ${l + 1} \xB7 attn weights (h${h + 1})`, M: a.weights, rowLabels: T.tokens, colLabels: T.tokens },
+      { key: "dC", label: `Block ${l + 1} \xB7 ctx out (h${h + 1})`, M: a.output, rowLabels: T.tokens, colLabels: dH(b.dHead) },
+      { key: "dconcat", label: `Block ${l + 1} \xB7 concat`, M: b.concat, rowLabels: T.tokens, colLabels: dc },
+      { key: "dproj", label: `Block ${l + 1} \xB7 proj (W_O)`, M: b.proj, rowLabels: T.tokens, colLabels: dc },
+      { key: "dresid1", label: `Block ${l + 1} \xB7 resid\u2081 x+proj`, M: b.resid1, rowLabels: T.tokens, colLabels: dc },
+      { key: "ln2", label: `Block ${l + 1} \xB7 LN\u2082 out`, M: b.ln2.output, rowLabels: T.tokens, colLabels: dc },
+      { key: "dhid", label: `Block ${l + 1} \xB7 FFN GELU hidden`, M: b.ffn.hiddenAct, rowLabels: T.tokens, colLabels: df },
+      { key: "dffn", label: `Block ${l + 1} \xB7 FFN out`, M: b.ffn.output, rowLabels: T.tokens, colLabels: dc },
+      { key: "dblockOut", label: `Block ${l + 1} \xB7 output x\u2033`, M: b.output, rowLabels: T.tokens, colLabels: dc },
+      { key: "finalLN", label: "Final LayerNorm out", M: T.finalLN.output, rowLabels: T.tokens, colLabels: dc },
+      { key: "logits", label: "Logits (last row = next-token scores)", M: T.logits, rowLabels: T.tokens, colLabels: T.vocab, maxCols: 16 }
+    ];
+    if (S.decStep) {
+      list.push({ key: "probs", label: "Probabilities (last position)", vec: S.decStep.probs, vocab: T.vocab });
+    }
+    return list;
+  }
+  function renderInspector() {
+    const tensors = currentTensors();
+    if (!tensors.find((t2) => t2.key === S.selTensor)) {
+      S.selTensor = tensors.length ? tensors[0].key : null;
+    }
+    $("tensorList").innerHTML = tensors.map((t2) => {
+      const sh = t2.M ? `[${t2.M.length}, ${t2.M[0].length}]` : `[${t2.vec.length}]`;
+      return `<button class="tensor-btn${t2.key === S.selTensor ? " active" : ""}" data-tensor="${t2.key}" role="option" aria-selected="${t2.key === S.selTensor}">${esc(t2.label)}<span class="sh">${sh}</span></button>`;
+    }).join("") || `<span class="stage-sub">No tensors yet.</span>`;
+    const t = tensors.find((x) => x.key === S.selTensor);
+    if (!t) {
+      $("tensorDetail").innerHTML = "";
+      return;
+    }
+    const P = S.config.precision;
+    if (t.vec) {
+      const s = vecStats(t.vec);
+      const order = t.vec.map((p, id) => ({ id, p })).sort((a, b) => b.p - a.p).slice(0, 12);
+      $("tensorDetail").innerHTML = `
+      <div><b>${esc(t.label)}</b> ${shapeBadge([t.vec.length])} <span class="row-sum">\u03A3 = ${fmt(t.vec.reduce((a, b) => a + b, 0), 4)}</span></div>
+      <div class="insp-grid">
+        <div class="insp-stat"><div class="k">Min</div><div class="v">${fmt(s.min)}</div></div>
+        <div class="insp-stat"><div class="k">Max</div><div class="v">${fmt(s.max)}</div></div>
+        <div class="insp-stat"><div class="k">Mean</div><div class="v">${fmt(s.mean)}</div></div>
+      </div>
+      <div class="stage-sub">Top 12 of ${t.vec.length}:</div>
+      ${barsHTML(order.map((d) => ({ label: `${t.vocab[d.id]} (id ${d.id})`, value: d.p, kept: true })), { precision: P })}`;
+    } else {
+      $("tensorDetail").innerHTML = `
+      <div><b>${esc(t.label)}</b> ${shapeBadge([t.M.length, t.M[0].length])}</div>
+      ${statsGrid(t.label, t.M)}
+      ${matrixHTML(t.M, { rowLabels: t.rowLabels, colLabels: t.colLabels, precision: P, maxCols: t.maxCols ?? 16, maxRows: 16 })}`;
+    }
+  }
+  function renderDynamic() {
+    if (!recomputeAll()) {
+      renderPipe();
+      return;
+    }
+    renderPipe();
+    renderStage();
+    renderExplain();
+    renderInspector();
+    $("tempVal") && ($("tempVal").textContent = S.config.temperature.toFixed(2));
+    $("pVal") && ($("pVal").textContent = S.config.p.toFixed(2));
+  }
+  function gotoStage(i) {
+    const st = stages();
+    S.stage = Math.max(0, Math.min(st.length - 1, i));
+    S.showMore = false;
+    S.showMath = false;
+    S.selTensor = STAGE_DEFAULT_TENSOR[st[S.stage].id] || S.selTensor;
+    stopPlay();
+    renderPipe();
+    renderStage();
+    renderExplain();
+    renderInspector();
+  }
+  function setMode(m) {
+    if (S.mode === m) return;
+    S.mode = m;
+    S.stage = 0;
+    S.showMore = false;
+    S.showMath = false;
+    setAutoGen(false);
+    stopPlay();
+    $("tabEncoder").classList.toggle("active", m === "encoder");
+    $("tabDecoder").classList.toggle("active", m === "decoder");
+    $("tabEncoder").setAttribute("aria-pressed", m === "encoder");
+    $("tabDecoder").setAttribute("aria-pressed", m === "decoder");
+    S.selTensor = STAGE_DEFAULT_TENSOR[stages()[0].id];
+    renderDynamic();
+  }
+  function stopPlay() {
+    S.playing = false;
+    clearInterval(S.playTimer);
+    $("playBtn").textContent = "\u25B6 Play";
+  }
+  function togglePlay() {
+    if (S.playing) {
+      stopPlay();
+      return;
+    }
+    S.playing = true;
+    $("playBtn").textContent = "\u23F8 Pause";
+    S.playTimer = setInterval(() => {
+      if (S.stage >= stages().length - 1) {
+        stopPlay();
+        return;
+      }
+      S.stage++;
+      S.selTensor = STAGE_DEFAULT_TENSOR[stages()[S.stage].id] || S.selTensor;
+      renderPipe();
+      renderStage();
+      renderExplain();
+      renderInspector();
+    }, 2400);
+  }
+  function wireGelu() {
+    const svg = $("geluPlot");
+    if (!svg) return;
+    const gelu2 = (x) => 0.5 * x * (1 + Math.tanh(Math.sqrt(2 / Math.PI) * (x + 0.044715 * x ** 3)));
+    const W = 460, P = 28, minX = -3, maxX = 3;
+    const dot = $("geluDot"), out = $("geluReadout");
+    svg.addEventListener("mousemove", (ev) => {
+      const r = svg.getBoundingClientRect();
+      const px = (ev.clientX - r.left) / r.width * W;
+      const x = minX + (Math.min(W - P, Math.max(P, px)) - P) / (W - 2 * P) * (maxX - minX);
+      const ys = [];
+      for (let i = 0; i <= 120; i++) ys.push(gelu2(minX + (maxX - minX) * i / 120));
+      const minY = Math.min(...ys), maxY = Math.max(...ys), H = 200;
+      const X = (v) => P + (v - minX) / (maxX - minX) * (W - 2 * P);
+      const Y = (v) => H - P - (v - minY) / (maxY - minY) * (H - 2 * P);
+      dot.setAttribute("cx", X(x));
+      dot.setAttribute("cy", Y(gelu2(x)));
+      dot.style.display = "block";
+      out.textContent = `x=${fmt(x, 3)} \u2192 GELU=${fmt(gelu2(x), 4)}`;
+    });
+    svg.addEventListener("mouseleave", () => {
+      dot.style.display = "none";
+    });
+  }
+  function openModal(title, bodyHTML) {
+    $("modalTitle").textContent = title;
+    $("modalBody").innerHTML = bodyHTML;
+    $("modalBack").classList.add("show");
+  }
+  function showAbout() {
+    openModal("About this simulator", `<p>${esc(ABOUT_TEXT).replace(/\n\n/g, "</p><p>").replace(/\n/g, "<br>")}</p>
+    <p><b>What went in? What operation happened? What came out? What is its shape? Why does it exist?</b> \u2014 every stage answers these five questions. Priority: <b>correctness \u2192 clarity \u2192 consistency \u2192 interaction \u2192 aesthetics</b>.</p>
+    <p>Keyboard: \u2190/\u2192 move between stages \xB7 N generates the next token in Mode B.</p>`);
+  }
+  function showTests() {
+    const res = runTests();
+    const pass = res.filter((r) => r.pass).length;
+    openModal(
+      `Engine tests \u2014 ${pass}/${res.length} passing`,
+      res.map((r) => `<div class="test-row"><span class="${r.pass ? "pass" : "fail"}">${r.pass ? "PASS" : "FAIL"}</span><span>${esc(r.name)}${r.error ? ` \u2014 <i>${esc(r.error)}</i>` : ""}</span></div>`).join("")
+    );
+  }
+  function onAction(action, el) {
+    const v = el.dataset.v, i = el.dataset.i !== void 0 ? +el.dataset.i : null;
+    switch (action) {
+      case "embView":
+        S.embView = v;
+        break;
+      case "qkvTab":
+        S.qkvTab = v;
+        break;
+      case "selHead":
+        S.selHead = i;
+        break;
+      case "selBlock":
+        S.selBlock = i;
+        break;
+      case "selQuery":
+        S.selQuery = i;
+        break;
+      case "attnView":
+        S.attnView = v;
+        break;
+      case "dAttnView":
+        S.dAttnView = v;
+        break;
+      case "ffnView":
+        S.ffnView = v;
+        break;
+      case "dffnView":
+        S.dffnView = v;
+        break;
+      case "resView":
+        S.resView = v;
+        break;
+      case "toggleCalc":
+        S.showCalc = !S.showCalc;
+        break;
+      case "toggleMask":
+        S.showMask = !S.showMask;
+        break;
+      case "topN":
+        S.topN = i;
+        break;
+      case "method":
+        S.config.method = v;
+        renderConfig();
+        break;
+      case "k":
+        S.config.k = i;
+        break;
+      case "inspect":
+        S.selTensor = el.dataset.tensor;
+        renderInspector();
+        document.querySelector(".bottom-bar").scrollIntoView({ behavior: "smooth", block: "nearest" });
+        return;
+      case "explainMore":
+        S.showMore = !S.showMore;
+        renderExplain();
+        return;
+      case "explainMath":
+        S.showMath = !S.showMath;
+        renderExplain();
+        return;
+      case "nextToken":
+        setAutoGen(false);
+        nextToken();
+        return;
+      case "autoGen":
+        setAutoGen(!S.autoGen);
+        break;
+      case "stepBack":
+        setAutoGen(false);
+        stepBack();
+        return;
+      case "resetGen":
+        setAutoGen(false);
+        S.decPrompt = $("decInput")?.value ?? S.decPrompt;
+        resetDecoder();
+        break;
+      case "selHist":
+        S.selHist = i;
+        break;
+      case "applyEncInput":
+        S.encInput = $("encInputMini").value;
+        break;
+      default:
+        return;
+    }
+    renderDynamic();
+  }
+  var encDebounce = null;
+  function initEvents() {
+    document.addEventListener("click", (ev) => {
+      const st = ev.target.closest("[data-stage]");
+      if (st) {
+        gotoStage(+st.dataset.stage);
+        return;
+      }
+      const tb = ev.target.closest("[data-tensor]");
+      if (tb) {
+        S.selTensor = tb.dataset.tensor;
+        renderInspector();
+        return;
+      }
+      const a = ev.target.closest("[data-action]");
+      if (a) {
+        onAction(a.dataset.action, a);
+        return;
+      }
+    });
+    document.addEventListener("keydown", (ev) => {
+      if (ev.key === "Enter" && ev.target.matches?.('[role="button"][data-action]')) {
+        ev.target.click();
+        return;
+      }
+      const typing = /^(INPUT|TEXTAREA|SELECT)$/.test(document.activeElement?.tagName || "");
+      if (typing) return;
+      if (ev.key === "ArrowRight") gotoStage(S.stage + 1);
+      else if (ev.key === "ArrowLeft") gotoStage(S.stage - 1);
+      else if ((ev.key === "n" || ev.key === "N") && S.mode === "decoder") {
+        setAutoGen(false);
+        nextToken();
+      }
+    });
+    document.addEventListener("input", (ev) => {
+      const el = ev.target;
+      if (el.id === "encInput") {
+        S.encInput = el.value;
+        clearTimeout(encDebounce);
+        encDebounce = setTimeout(renderDynamic, 500);
+      } else if (el.id === "encInputMini") {
+        S.encInput = el.value;
+        clearTimeout(encDebounce);
+        encDebounce = setTimeout(() => {
+          renderDynamic();
+        }, 600);
+      } else if (el.id === "decInput") {
+        S.decPrompt = el.value;
+      } else if (el.dataset.cfgRange) {
+        S.config[el.dataset.cfgRange] = +el.value;
+        if (el.dataset.cfgRange === "temperature") {
+          const t2 = $("tempSlider2");
+          if (t2 && t2 !== el) t2.value = el.value;
+        }
+        renderDynamic();
+      } else if (el.dataset.action === "temp") {
+        S.config.temperature = +el.value;
+        renderDynamic();
+      } else if (el.dataset.action === "p") {
+        S.config.p = +el.value;
+        renderDynamic();
+      }
+    });
+    document.addEventListener("change", (ev) => {
+      const el = ev.target;
+      if (el.dataset.cfg) {
+        const key = el.dataset.cfg;
+        S.config[key] = key === "method" ? el.value : +el.value;
+        if (["dModel", "dFF", "nHeads", "nLayers", "vocabSize"].includes(key)) {
+          setAutoGen(false);
+          resetDecoder();
+        }
+        renderConfig();
+        renderDynamic();
+      } else if (el.id === "seedInput") {
+        S.config.seed = Math.max(0, +el.value || 0);
+        setAutoGen(false);
+        resetDecoder();
+        renderConfig();
+        renderDynamic();
+      } else if (el.id === "encInput" || el.id === "encInputMini") {
+        S.encInput = el.value;
+        renderDynamic();
+      }
+    });
+    $("prevBtn").onclick = () => gotoStage(S.stage - 1);
+    $("nextBtn").onclick = () => gotoStage(S.stage + 1);
+    $("playBtn").onclick = togglePlay;
+    $("tabEncoder").onclick = () => setMode("encoder");
+    $("tabDecoder").onclick = () => setMode("decoder");
+    $("aboutBtn").onclick = showAbout;
+    $("testsBtn").onclick = showTests;
+    $("modalClose").onclick = () => $("modalBack").classList.remove("show");
+    $("modalBack").addEventListener("click", (ev) => {
+      if (ev.target === $("modalBack")) $("modalBack").classList.remove("show");
+    });
+  }
+  renderConfig();
+  resetDecoder();
+  recomputeEncoder();
+  S.selTensor = STAGE_DEFAULT_TENSOR[stages()[0].id];
+  initEvents();
+  renderDynamic();
+})();
+</script>
+</body>
+</html>

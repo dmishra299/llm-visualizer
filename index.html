@@ -1,0 +1,80 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Inside a Tiny Transformer — Interactive LLM Visualizer</title>
+<link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+
+<header class="app-header">
+  <div class="brand">
+    <div class="brand-mark" aria-hidden="true">T</div>
+    <h1>Inside a Tiny Transformer<small>an interactive simulator of Transformer inference</small></h1>
+  </div>
+  <nav class="mode-tabs" aria-label="Learning mode">
+    <button class="mode-tab active" id="tabEncoder" aria-pressed="true">A · Attention Explorer</button>
+    <button class="mode-tab" id="tabDecoder" aria-pressed="false">B · GPT-style Generator</button>
+  </nav>
+  <div class="header-spacer"></div>
+  <div class="header-actions">
+    <label class="seed-chip" title="Master seed: same input + config + seed reproduces every number">
+      seed <input id="seedInput" type="number" value="42" min="0" max="999999" aria-label="Random seed" />
+    </label>
+    <button class="btn small" id="aboutBtn">About this simulator</button>
+    <button class="btn small" id="testsBtn">Run tests</button>
+  </div>
+</header>
+
+<div class="config-bar" id="configBar" aria-label="Model configuration"></div>
+<div style="padding:0 16px"><div class="config-error" id="configError" role="alert"></div></div>
+
+<main class="layout">
+  <aside class="panel pipe-col" aria-label="Pipeline stages">
+    <h2>Pipeline</h2>
+    <div class="pipe-list" id="pipeList"></div>
+  </aside>
+
+  <section class="panel main-col" aria-label="Main visualization">
+    <div class="stage-nav">
+      <button class="btn small" id="prevBtn" aria-label="Previous stage">← Prev</button>
+      <button class="btn small" id="playBtn" aria-label="Auto-play stages">▶ Play</button>
+      <button class="btn small primary" id="nextBtn" aria-label="Next stage">Next →</button>
+      <span class="stage-pos" id="stagePos"></span>
+      <div class="progress-dots" id="progressDots" aria-hidden="true"></div>
+    </div>
+    <h2 class="stage-title" id="stageTitle"></h2>
+    <p class="stage-sub" id="stageSub"></p>
+    <div id="stageView"></div>
+  </section>
+
+  <aside class="panel explain-col" aria-label="Explanation">
+    <h2>Explanation</h2>
+    <div class="explain-box" id="explainBox"></div>
+  </aside>
+</main>
+
+<div class="bottom-bar">
+  <section class="panel" aria-label="Tensor inspector">
+    <h2>Tensor Inspector — one source of truth: every number below comes from the same computation as the visualization above</h2>
+    <div class="inspector-body">
+      <div class="tensor-list" id="tensorList" role="listbox" aria-label="Tensors"></div>
+      <div id="tensorDetail"></div>
+    </div>
+  </section>
+</div>
+
+<div class="modal-back" id="modalBack">
+  <div class="modal" role="dialog" aria-modal="true" aria-labelledby="modalTitle">
+    <h2 id="modalTitle"></h2>
+    <div id="modalBody"></div>
+    <div class="controls-row" style="margin-top:12px">
+      <button class="btn" id="modalClose">Close</button>
+    </div>
+  </div>
+</div>
+
+<script type="module" src="js/app.js"></script>
+</body>
+</html>
